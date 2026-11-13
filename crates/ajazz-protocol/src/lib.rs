@@ -1,6 +1,8 @@
 use std::fmt;
 use thiserror::Error;
 
+pub use hidapi;
+
 /// EVision Semiconductor (Fabricante do controlador USB do teclado físico AK820)
 pub const AK820_VID: u16 = 0x320F;
 pub const AK820_PID: u16 = 0x505B;
@@ -41,7 +43,7 @@ pub enum ProtocolError {
 }
 
 /// Modos de iluminação conhecidos do teclado AK820
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum LightingMode {
     Static = 0x06,
@@ -49,7 +51,7 @@ pub enum LightingMode {
 }
 
 /// Representa a cor de um LED individual na matriz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RgbColor {
     pub r: u8,
     pub g: u8,

@@ -4,21 +4,24 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Marco 1 (Protocolo) & Marco 2 (Especificação da GUI) Concluídos
+## 1. Posição Atual: Marco 1 (Protocolo) & Marco 2 (Daemon IPC) Concluídos com Sucesso
 
 - **Engenharia Reversa USB (AK820):**
   - Canal de iluminação estática completamente decodificado via `ak820_red.pcapng`.
-  - Testado e validado em tempo real via Rust nativo (`crates/ajazz-protocol/examples/set_color`).
   - Proteção estrita contra brick e desgaste de memória Flash documentada no código e no [AGENTS.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/AGENTS.md).
-- **Alinhamento e Especificação da GUI (`Grill Me`):**
-  - Rodada completa de 11 decisões concluída e documentada formalmente em [gui_specification.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/ui/gui_specification.md).
-- **Bloqueio/Aguardando:** Confirmação do usuário sobre a especificação da GUI para iniciar a implementação da arquitetura Slint / Daemon IPC.
+- **Daemon Headless (`ajazz-daemon`):**
+  - Servidor IPC nativo via Named Pipe do Windows (`\\.\pipe\ajazz-daemon`) implementado com Tokio assíncrono.
+  - Padrão **Actor** (`device_manager.rs`) com posse exclusiva do hardware USB e tolerância a desconexões a quente (*hot-unplug*).
+  - Protocolo de mensagens JSON com comandos: `ping`, `get_status`, `set_static_color`, `set_lighting`.
+  - **Métricas de Hardware Reais Validadas:** **7.37 MB de RAM** (meta: < 10 MB) e **0% de CPU em idle**.
+  - Testado e validado em tempo real via cliente IPC: comandos `green` e `purple` aplicados no teclado físico instantaneamente.
+- **Alinhamento da GUI (`Grill Me`):**
+  - Especificação completa em [gui_specification.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/ui/gui_specification.md) com tema grafite escuro fosco (`#18181B`), tipografia JetBrains Mono e representação das teclas em borda sólida nítida (sem degradês/neon).
+- **Bloqueio/Aguardando:** Nenhum bloqueio. Prontos para construir a GUI Slint integrada diretamente ao Named Pipe.
 
 ---
 
 ## 2. Inventário de Hardware Identificado (Evidência Direta)
-
-Detectados via ferramenta interna de enumeração (`cargo run -p ajazz-protocol --example enumerate`):
 
 | Dispositivo | Fabricante | VID | PID | Endpoint de Controle Proprietário |
 | :--- | :--- | :--- | :--- | :--- |
@@ -27,15 +30,15 @@ Detectados via ferramenta interna de enumeração (`cargo run -p ajazz-protocol 
 
 ---
 
-## 3. Decisões de Arquitetura da Interface Gráfica (Alinhadas no Grill Me)
+## 3. Decisões Arquiteturais Consolidadas
 
-1. **Janela e Visual:** Slint nativo, janela compacta (~900x600 px), Dark Mode limpo (estilo Raycast/Linear).
-2. **Navegação:** Sidebar vertical com seções para Teclado AK820, Mouse NearLink e Ajustes/Daemon.
-3. **Ciclo de Vida:** Fechar no `X` encerra o processo gráfico da GUI e mantém ícone no System Tray para economizar RAM.
-4. **Teclado:** Layout 75% vetorial interativo com preview ao vivo de cores e GIFs + destaque visual para chattering.
-5. **GIF Player:** Drag & Drop direto sobre o teclado, limitado a 25 FPS para proteger o barramento USB.
-6. **Mouse:** Mostrador de bateria com barra e %, seletor de estágios de DPI e painel de diagnóstico para clique preso.
-7. **IPC e Persistência:** JSON em `%APPDATA%\ajazz-companion\config.json`, comunicação via `\\.\pipe\ajazz-daemon`.
+1. **Separação Daemon vs GUI:**
+   - **Daemon (`ajazz-daemon`):** 7.37 MB RAM, 0% CPU em idle. Dono do acesso USB. Escuta em `\\.\pipe\ajazz-daemon`.
+   - **GUI (`ajazz-gui`):** Processo Slint independente, aberta sob demanda, fecha no `X` para o System Tray liberando 100% da RAM da UI.
+2. **Motor de Animação de GIFs:**
+   - Projeção bilinear travada a 25 FPS para proteger o barramento USB, sem commits na Flash do chip (reprodução em RAM).
+3. **Monitor de Diagnóstico de Switches:**
+   - Detecção passiva de repiques no Daemon reportada via IPC para destaque visual na GUI.
 
 ---
 
@@ -48,12 +51,16 @@ Detectados via ferramenta interna de enumeração (`cargo run -p ajazz-protocol 
 - `4248d45`: `chore: add docs captures directory for usb traffic traces`
 - `5b707b3`: `feat: decode AK820 lighting protocol and implement static color control in Rust`
 - `f55ddd7`: `docs: add anti-brick and flash wear-out safety rules`
-- `docs/ui/gui_specification.md`: Especificação técnica e visual completa da interface gráfica.
+- `034df4c`: `docs: document comprehensive GUI architecture and design specification from grill-me session`
+- `1ddf438`: `docs: adjust GUI palette to graphite-neutral dark tone and JetBrains typography`
+- `crates/ajazz-daemon`: Servidor IPC Named Pipe (`\\.\pipe\ajazz-daemon`) com actor de hardware, 7.37 MB RAM e 0% CPU.
 
 ---
 
 ## 5. Próximos Passos Imediatos
 
-1. Confirmação do usuário sobre o documento de especificação da GUI.
-2. Implementação da casca Slint (`ajazz-gui`) com a Sidebar e layout base do teclado 75%.
-3. Implementação do servidor IPC Named Pipe no Daemon (`ajazz-daemon`).
+1. Construção da interface gráfica em Slint (`ajazz-gui`):
+   - `theme.slint` (tokens grafite e JetBrains Mono).
+   - Componente de tecla `keycap.slint` com borda sólida.
+   - Grade interativa 75% e Sidebar de navegação.
+2. Conexão do cliente IPC na GUI para acionamento direto dos comandos de cor no Daemon.
