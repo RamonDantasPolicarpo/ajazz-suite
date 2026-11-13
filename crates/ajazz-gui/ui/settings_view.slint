@@ -1,0 +1,142 @@
+import { Theme } from "theme.slint";
+
+export component SettingsView inherits Rectangle {
+    in property <bool> daemon-connected: true;
+    in property <string> daemon-ram: "7.37 MB";
+    in-out property <bool> autostart: false;
+
+    callback toggle-autostart();
+    callback restart-daemon();
+
+    background: Theme.background;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        Text {
+            text: "CONFIGURAÇÕES DO SISTEMA & DAEMON";
+            font-family: Theme.mono-font;
+            font-size: 14px;
+            font-weight: 700;
+            color: Theme.text-primary;
+        }
+
+        Text {
+            text: "Parâmetros operacionais do serviço headless e inicialização.";
+            font-family: Theme.mono-font;
+            font-size: 10px;
+            color: Theme.text-secondary;
+        }
+
+        Rectangle { height: 8px; }
+
+        // Card do Serviço Daemon
+        Rectangle {
+            width: 580px;
+            height: 160px;
+            background: Theme.surface;
+            border-radius: Theme.radius-lg;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: "STATUS DO SERVIÇO DE SEGUNDO PLANO (HEADLESS DAEMON)";
+                    font-family: Theme.mono-font;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                }
+
+                HorizontalLayout {
+                    spacing: 24px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "ESTADO IPC";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: root.daemon-connected ? "CONECTADO (ONLINE)" : "DESCONECTADO";
+                            font-family: Theme.mono-font;
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: root.daemon-connected ? Theme.status-online : Theme.status-error;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "CANAL IPC";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: "\\\\.\\pipe\\ajazz-daemon";
+                            font-family: Theme.mono-font;
+                            font-size: 11px;
+                            color: Theme.text-primary;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "CONSUMO DE RAM";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: root.daemon-ram;
+                            font-family: Theme.mono-font;
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 12px;
+
+                    Rectangle {
+                        width: 180px;
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: restart-touch.has-hover ? Theme.surface-hover : Theme.surface-raised;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        Text {
+                            text: "RECONECTAR AO DAEMON";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        restart-touch := TouchArea {
+                            clicked => { root.restart-daemon(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
