@@ -7,6 +7,7 @@ import { SettingsView } from "settings_view.slint";
 
 export component MainWindow inherits Window {
     title: "AJAZZ Companion Suite";
+    default-font-family: "JetBrains Mono";
     preferred-width: 980px;
     preferred-height: 640px;
     min-width: 940px;
@@ -44,10 +45,12 @@ export component MainWindow inherits Window {
 
                 // Título e status do dispositivo
                 HorizontalLayout {
+                    width: 604px;
                     alignment: space-between;
 
                     VerticalLayout {
                         spacing: 3px;
+                        alignment: center;
                         Text {
                             text: "AJAZZ AK820 75% MECHANICAL KEYBOARD";
                             font-family: Theme.mono-font;
@@ -64,7 +67,6 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        width: 96px;
                         height: 24px;
                         border-radius: Theme.radius-sm;
                         background: Theme.surface;
@@ -72,20 +74,28 @@ export component MainWindow inherits Window {
                         border-width: 1px;
 
                         HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
                             spacing: 6px;
                             alignment: center;
-                            Rectangle {
-                                width: 6px;
-                                height: 6px;
-                                border-radius: 3px;
-                                background: Theme.status-online;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: Theme.status-online;
+                                }
                             }
+
                             Text {
                                 text: "CONECTADO";
                                 font-family: Theme.mono-font;
                                 font-size: 9px;
                                 font-weight: 700;
                                 color: Theme.text-secondary;
+                                vertical-alignment: center;
                             }
                         }
                     }
