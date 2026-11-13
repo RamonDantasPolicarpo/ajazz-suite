@@ -18,25 +18,28 @@ export component SidebarItem inherits Rectangle {
         padding-left: 12px;
         padding-right: 12px;
         spacing: 12px;
-        alignment: center;
+        alignment: start; // Alinhamento à esquerda estrito para todos os itens
 
         // Tag de ícone mono
-        Rectangle {
-            width: 28px;
-            height: 28px;
-            border-radius: Theme.radius-sm;
-            background: root.is-active ? Theme.surface-raised : Theme.surface;
-            border-color: Theme.border;
-            border-width: 1px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: root.is-active ? Theme.surface-raised : Theme.surface;
+                border-color: Theme.border;
+                border-width: 1px;
 
-            Text {
-                text: root.icon-text;
-                font-family: Theme.mono-font;
-                font-size: 11px;
-                font-weight: 700;
-                color: root.is-active ? Theme.text-primary : Theme.text-secondary;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+                Text {
+                    text: root.icon-text;
+                    font-family: Theme.mono-font;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: root.is-active ? Theme.text-primary : Theme.text-secondary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
             }
         }
 
@@ -73,48 +76,53 @@ export component Sidebar inherits Rectangle {
 
     callback tab-changed(int);
 
-    width: 210px;
+    width: 220px;
     background: Theme.surface;
     border-color: Theme.border;
     border-width: 1px;
 
     VerticalLayout {
         padding: 16px;
-        spacing: 8px;
+        spacing: 10px;
 
         // Header / Logo
         HorizontalLayout {
-            spacing: 8px;
+            spacing: 10px;
             alignment: start;
-            padding-bottom: 12px;
+            padding-left: 4px;
+            padding-bottom: 8px;
 
-            Rectangle {
-                width: 20px;
-                height: 20px;
-                border-radius: 4px;
-                background: Theme.text-primary;
-                Text {
-                    text: "A";
-                    color: Theme.background;
-                    font-family: Theme.mono-font;
-                    font-size: 12px;
-                    font-weight: 800;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.text-primary;
+                    Text {
+                        text: "A";
+                        color: Theme.background;
+                        font-family: Theme.mono-font;
+                        font-size: 12px;
+                        font-weight: 800;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
                 }
             }
 
             VerticalLayout {
-                spacing: 1px;
+                alignment: center;
+                spacing: 2px;
                 Text {
-                    text: "AJAZZ COMPANION";
+                    text: "AJAZZ SUITE";
                     font-family: Theme.mono-font;
                     font-size: 11px;
                     font-weight: 700;
                     color: Theme.text-primary;
                 }
                 Text {
-                    text: "UNIFIED SUITE";
+                    text: "UNIFIED COMPANION";
                     font-family: Theme.mono-font;
                     font-size: 8px;
                     color: Theme.text-muted;
@@ -127,7 +135,7 @@ export component Sidebar inherits Rectangle {
             background: Theme.border;
         }
 
-        Rectangle { height: 8px; }
+        Rectangle { height: 4px; }
 
         // Navegação
         SidebarItem {
@@ -174,32 +182,50 @@ export component Sidebar inherits Rectangle {
 
         Rectangle { height: 4px; }
 
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: center;
+        // Card de Status do Daemon
+        Rectangle {
+            height: 48px;
+            border-radius: Theme.radius-sm;
+            background: Theme.surface-raised;
+            border-color: Theme.border;
+            border-width: 1px;
 
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.daemon-online ? Theme.status-online : Theme.status-warning;
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: root.daemon-online ? Theme.status-online : Theme.status-warning;
+                        }
+                    }
+
+                    Text {
+                        text: root.daemon-online ? "DAEMON ONLINE" : "RECONECTANDO...";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: root.daemon-online ? Theme.text-primary : Theme.status-warning;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "\\\\.\\pipe\\ajazz-daemon";
+                    font-family: Theme.mono-font;
+                    font-size: 8px;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                }
             }
-
-            Text {
-                text: root.daemon-online ? "DAEMON ONLINE" : "RECONECTANDO...";
-                font-family: Theme.mono-font;
-                font-size: 9px;
-                font-weight: 600;
-                color: root.daemon-online ? Theme.text-secondary : Theme.status-warning;
-            }
-        }
-
-        Text {
-            text: "\\\\.\\pipe\\ajazz-daemon";
-            font-family: Theme.mono-font;
-            font-size: 8px;
-            color: Theme.text-muted;
-            horizontal-alignment: center;
         }
     }
 }
