@@ -16,7 +16,12 @@ Este documento define as regras de engenharia, arquitetura e convenções que to
    - Nunca adivinhe ou assuma estruturas de pacotes USB sem evidência capturada (USBPcap/Wireshark) ou reversa estática no Ghidra.
    - Toda estrutura de pacote deve ser documentada primeiro em `docs/protocol/` com offsets de bytes, endianness e propósito antes de ser codificada em Rust.
 
-3. **Restrições de Desempenho e Recursos**:
+3. **Proteção Contra Brick e Desgaste de Flash (Flash Wear-Out)**:
+   - **Zero Fuzzing / Proibido Bytes Aleatórios**: Apenas opcodes e sequências com evidência comprovada e segura extraída do software oficial são permitidos.
+   - **Bloqueio Total de Firmware/DFU**: Qualquer rotina de bootloader, IAP/ISP ou sobrescrita de microcódigo do controlador está estritamente proibida.
+   - **Prevenção de Desgaste de Memória Flash**: O comando `Opcode 0x02` (`COMMIT_TRANSACTION`) grava na memória flash não-volátil do teclado. Em animações ou projeção de GIFs a 25 FPS, é proibido disparar `0x02` em loop contínuo para evitar destruir a vida útil da memória flash do MCU. Deve-se usar buffer volátil em RAM.
+
+4. **Restrições de Desempenho e Recursos**:
    - Zero bibliotecas desnecessárias. Não traga WebViews, runtimes Node.js ou dependências pesadas de frameworks sem aprovação explícita.
    - O motor de animação de LEDs não deve alocar memória dinâmica (`Vec::new`, etc.) no loop quente de renderização de frames.
 
@@ -27,6 +32,7 @@ Este documento define as regras de engenharia, arquitetura e convenções que to
 Para contornar limitações e comportamento prolixo de modelos como Flash e preservar cotas de Sonnet/Opus:
 
 - **Estilo de Resposta Direto**: Seja estritamente objetivo. Sem introduções longas, sem repetições e sem rodeios.
+- **Alinhamento de UI (Grill Me Obrigatório)**: Nenhuma linha de código da interface gráfica (`ajazz-gui`) deve ser escrita sem antes realizar uma rodada completa de alinhamento e validação de requisitos visuais/funcionais com o usuário via entrevista técnica (Grill Me).
 - **Atualização Contínua de Contexto**: Sempre mantenha o arquivo `CONTEXT.md` atualizado com o status atual da fase, decisões recentes, bloqueios e próximos passos imediatos.
 - **Commits Convencionais**: Todo trabalho concluído deve ser versionado usando Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
 - **Proibido Código Inflado**: Gere o mínimo de código com a máxima eficiência. Zero boilerplate desnecessário, zero abstrações prematuras ou testes fictícios.
