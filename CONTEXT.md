@@ -47,6 +47,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `e7999c2`: `feat: implement headless ajazz-daemon with Windows Named Pipe IPC and hardware actor`
 - `a282dd7`: `feat: implement native Slint GUI with 75% AK820 layout, monochromatic graphite theme and IPC client`
 - `be2fad5`: `fix: correct AK820 75% physical keycap alignment, arrow cluster and navigation column`
+- `5ace228`: `fix: embed JetBrains Mono font, fix badge padding and align keyboard and sidebar geometry`
 
 ---
 
