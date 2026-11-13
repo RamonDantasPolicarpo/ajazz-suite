@@ -27,6 +27,7 @@ Este documento define as regras de engenharia, arquitetura e convenções que to
 Para contornar limitações e comportamento prolixo de modelos como Flash e preservar cotas de Sonnet/Opus:
 
 - **Estilo de Resposta Direto**: Seja estritamente objetivo. Sem introduções longas, sem repetições e sem rodeios.
+- **Atualização Contínua de Contexto**: Sempre mantenha o arquivo `CONTEXT.md` atualizado com o status atual da fase, decisões recentes, bloqueios e próximos passos imediatos.
 - **Commits Convencionais**: Todo trabalho concluído deve ser versionado usando Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
 - **Proibido Código Inflado**: Gere o mínimo de código com a máxima eficiência. Zero boilerplate desnecessário, zero abstrações prematuras ou testes fictícios.
 - **Conceito Antes da Pergunta**: Se um conceito técnico novo for necessário para o usuário decidir algo, explique o conceito de forma simples e direta ANTES de fazer a pergunta.
