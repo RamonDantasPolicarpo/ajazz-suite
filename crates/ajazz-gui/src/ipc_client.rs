@@ -1,3 +1,4 @@
+use ajazz_protocol::{LightingMode, RgbColor};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -5,7 +6,7 @@ use tokio::net::windows::named_pipe::ClientOptions;
 
 const PIPE_NAME: &str = r"\\.\pipe\ajazz-daemon";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum IpcRequest {
     Ping,
@@ -15,22 +16,23 @@ pub enum IpcRequest {
         b: u8,
     },
     SetLighting {
-        mode: u8,
+        mode: LightingMode,
         brightness: u8,
         speed: u8,
-        color: RgbPayload,
+        color: RgbColor,
     },
+    SetKeyMatrix {
+        colors: Vec<RgbColor>,
+    },
+    PlayGif {
+        path: String,
+        fps: Option<u8>,
+    },
+    StopGif,
     GetStatus,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RgbPayload {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum IpcResponse {
     Ok {
@@ -42,8 +44,9 @@ pub enum IpcResponse {
     Status {
         device_connected: bool,
         device_name: String,
-        current_color: Option<RgbPayload>,
-        current_mode: Option<String>,
+        current_color: Option<RgbColor>,
+        current_mode: Option<LightingMode>,
+        is_playing_gif: bool,
     },
     Pong,
 }

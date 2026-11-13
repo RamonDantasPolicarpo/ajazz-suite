@@ -1,6 +1,10 @@
+use crate::gif_decoder::decode_gif_to_matrix_frames;
 use ajazz_protocol::hidapi;
-use ajazz_protocol::{Ak820Device, LightingMode, RgbColor, PROFILE_AK820};
-use tokio::sync::{mpsc, oneshot};
+use ajazz_protocol::{
+    Ak820Device, LightingMode, RgbColor, PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
+};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
@@ -9,6 +13,7 @@ pub struct DeviceStatus {
     pub device_name: String,
     pub current_color: Option<RgbColor>,
     pub current_mode: Option<LightingMode>,
+    pub is_playing_gif: bool,
 }
 
 pub enum DeviceCommand {
@@ -20,17 +25,28 @@ pub enum DeviceCommand {
         RgbColor,
         oneshot::Sender<Result<(), String>>,
     ),
+    SetKeyMatrix(
+        [RgbColor; TOTAL_PHYSICAL_LEDS],
+        oneshot::Sender<Result<(), String>>,
+    ),
+    PlayGif(String, u8, oneshot::Sender<Result<(), String>>),
+    StopGif(oneshot::Sender<Result<(), String>>),
+    RenderFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     GetStatus(oneshot::Sender<DeviceStatus>),
 }
 
 /// Actor dedicado para controle exclusivo do hardware USB HID.
-pub async fn run_device_actor(mut rx: mpsc::Receiver<DeviceCommand>) {
+pub async fn run_device_actor(
+    cmd_tx: mpsc::Sender<DeviceCommand>,
+    mut rx: mpsc::Receiver<DeviceCommand>,
+) {
     info!("Iniciando gerenciador de hardware AK820...");
 
     let mut hid_api = hidapi::HidApi::new().ok();
     let mut device: Option<Ak820Device> = None;
     let mut current_color: Option<RgbColor> = None;
     let mut current_mode: Option<LightingMode> = None;
+    let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
 
     // Tenta conexão inicial
     if let Some(ref api) = hid_api {
@@ -43,6 +59,11 @@ pub async fn run_device_actor(mut rx: mpsc::Receiver<DeviceCommand>) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             DeviceCommand::SetStaticColor(color, resp) => {
+                // Para qualquer animação em andamento
+                if let Some(cancel) = gif_cancel_tx.take() {
+                    let _ = cancel.send(true);
+                }
+
                 let dev_res = ensure_connected(&mut device, &mut hid_api);
                 let result = match dev_res {
                     Ok(dev) => match dev.set_static_color(color) {
@@ -65,7 +86,12 @@ pub async fn run_device_actor(mut rx: mpsc::Receiver<DeviceCommand>) {
                 };
                 let _ = resp.send(result);
             }
+
             DeviceCommand::SetLighting(mode, brightness, speed, color, resp) => {
+                if let Some(cancel) = gif_cancel_tx.take() {
+                    let _ = cancel.send(true);
+                }
+
                 let dev_res = ensure_connected(&mut device, &mut hid_api);
                 let result = match dev_res {
                     Ok(dev) => match dev.set_lighting(mode, brightness, speed, color) {
@@ -88,13 +114,122 @@ pub async fn run_device_actor(mut rx: mpsc::Receiver<DeviceCommand>) {
                 };
                 let _ = resp.send(result);
             }
+
+            DeviceCommand::SetKeyMatrix(matrix, resp) => {
+                if let Some(cancel) = gif_cancel_tx.take() {
+                    let _ = cancel.send(true);
+                }
+
+                let dev_res = ensure_connected(&mut device, &mut hid_api);
+                let result = match dev_res {
+                    Ok(dev) => {
+                        let _ = dev.enable_custom_lighting_mode();
+                        match dev.set_custom_matrix(&matrix) {
+                            Ok(()) => {
+                                current_mode = Some(LightingMode::Custom);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                device = None;
+                                Err(format!("Erro ao enviar matriz USB: {e}"))
+                            }
+                        }
+                    }
+                    Err(e) => Err(e),
+                };
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::PlayGif(path, fps, resp) => {
+                // Interrompe GIF anterior
+                if let Some(cancel) = gif_cancel_tx.take() {
+                    let _ = cancel.send(true);
+                }
+
+                let dev_res = ensure_connected(&mut device, &mut hid_api);
+                match dev_res {
+                    Ok(dev) => {
+                        // Decodifica antecipadamente os quadros projetados
+                        match decode_gif_to_matrix_frames(&path) {
+                            Ok(frames) => {
+                                let total = frames.len();
+                                if let Err(e) = dev.enable_custom_lighting_mode() {
+                                    let _ = resp.send(Err(format!("Falha ao habilitar modo customizado: {e}")));
+                                    continue;
+                                }
+
+                                current_mode = Some(LightingMode::Custom);
+                                let (cancel_tx, mut cancel_rx) = watch::channel(false);
+                                gif_cancel_tx = Some(cancel_tx);
+
+                                let fps = fps.clamp(1, 60);
+                                let interval_ms = (1000 / fps as u64).max(16);
+                                let tx_clone = cmd_tx.clone();
+
+                                tokio::spawn(async move {
+                                    let mut interval =
+                                        tokio::time::interval(Duration::from_millis(interval_ms));
+                                    let mut frame_idx = 0;
+
+                                    loop {
+                                        tokio::select! {
+                                            _ = interval.tick() => {
+                                                let frame = frames[frame_idx];
+                                                if tx_clone.send(DeviceCommand::RenderFrame(frame)).await.is_err() {
+                                                    break;
+                                                }
+                                                frame_idx = (frame_idx + 1) % total;
+                                            }
+                                            _ = cancel_rx.changed() => {
+                                                if *cancel_rx.borrow() {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+
+                                info!("Reprodução de GIF iniciada: '{}' ({} frames @ {} FPS)", path, total, fps);
+                                let _ = resp.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = resp.send(Err(e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = resp.send(Err(e));
+                    }
+                }
+            }
+
+            DeviceCommand::StopGif(resp) => {
+                let stopped = gif_cancel_tx.take().is_some();
+                if stopped {
+                    info!("Reprodução de GIF interrompida.");
+                }
+                let _ = resp.send(Ok(()));
+            }
+
+            DeviceCommand::RenderFrame(frame) => {
+                if let Some(ref mut dev) = device {
+                    if let Err(e) = dev.set_custom_matrix(&frame) {
+                        warn!("Falha ao renderizar frame USB (desconexão?): {e}");
+                        device = None;
+                    }
+                }
+            }
+
             DeviceCommand::GetStatus(resp) => {
-                let is_connected = device.is_some() || try_connect_silent(&mut device, &mut hid_api);
+                let is_connected =
+                    device.is_some() || try_connect_silent(&mut device, &mut hid_api);
+                let is_playing = gif_cancel_tx.is_some();
                 let status = DeviceStatus {
                     connected: is_connected,
                     device_name: PROFILE_AK820.name.to_string(),
                     current_color,
                     current_mode,
+                    is_playing_gif: is_playing,
                 };
                 let _ = resp.send(status);
             }
@@ -114,7 +249,6 @@ fn ensure_connected<'a>(
     hid_api: &mut Option<hidapi::HidApi>,
 ) -> Result<&'a mut Ak820Device, String> {
     if device.is_none() {
-        // Atualiza ou inicializa hidapi
         if hid_api.is_none() {
             *hid_api = hidapi::HidApi::new().ok();
         }
@@ -138,5 +272,7 @@ fn ensure_connected<'a>(
         }
     }
 
-    device.as_mut().ok_or_else(|| "Dispositivo não disponível".to_string())
+    device
+        .as_mut()
+        .ok_or_else(|| "Dispositivo não disponível".to_string())
 }

@@ -73,9 +73,10 @@ payload[2] = ((checksum >> 8) & 0xFF) as u8; // MSB
 | `0x01` | `BEGIN_TRANSACTION` | Inicializa uma sessão de escrita de configuração no teclado. |
 | `0x02` | `COMMIT_TRANSACTION` | Aplica e persiste a configuração enviada na memória do teclado. |
 | `0x06` | `SET_LIGHTING` | Configura o modo de iluminação, velocidade, brilho e cores RGB. |
+| `0x07` | `KEY_MATRIX_MAPPING` | Configuração de mapeamento e macros das teclas (384 bytes / 7 chunks). |
+| `0x0B` | `SET_CUSTOM_RGB_MATRIX` | Transmissão de buffer RGB individual para matriz de 128 LEDs (384 bytes / 7 chunks). |
 | `0x1A` | `HEARTBEAT_POLL` | Pacote periódico enviado a cada ~5 segundos pelo software para manter sincronia. |
-| `0x07` | `SET_KEY_MAPPING` | Configuração de mapeamento e macros das teclas. |
-| `0x1B` | `SET_CUSTOM_LIGHTING` | Bloco de matriz de iluminação customizada por tecla. |
+| `0x1B` | `GET_LED_MAPPING` | Leitura da tabela de roteamento dos 128 índices de LEDs físicos do hardware (128 bytes / 3 chunks). |
 
 ---
 
@@ -118,3 +119,25 @@ Para alterar o modo ou cor do teclado com sucesso, o host deve disparar exatamen
    ```
    04 02 00 02 00 00 00 00 00 00 00 00 ... (64 bytes)
    ```
+
+---
+
+### 2.6 Matriz de Iluminação Customizada Individual (`Opcode 0x0B`)
+
+Para controlar a cor individual de cada tecla ou renderizar animações/GIFs espaciais:
+
+1. **Ativação de Modo**: O teclado deve ser comutado para o **Modo 20 (`0x14` / Custom)** enviando `Opcode 0x06` com `payload[9] = 0x14`.
+2. **Buffer de Matriz**: São endereçadas 128 posições físicas de LED x 3 canais (R, G, B) = **384 bytes**.
+3. **Fragmentação em 7 Chunks de 56 Bytes**:
+   O payload de cada pacote é estruturado como:
+   - `payload[0] = 0x04` (Report ID)
+   - `payload[1..2] = Checksum LE (soma de payload[3..64])`
+   - `payload[3] = 0x0B` (Opcode)
+   - `payload[4] = chunk_len` (56 para chunks 0..5, 48 para chunk 6)
+   - `payload[5..6] = offset LE` (0, 56, 112, 168, 224, 280, 336)
+   - `payload[7] = 0x00` (Reservado)
+   - `payload[8..8+chunk_len] = dados RGB brutos`
+
+### 2.7 Prevenção de Desgaste de Memória Flash (25 FPS Streaming)
+- O comando `Opcode 0x02` (`COMMIT_TRANSACTION`) persiste dados no setor não-volátil da memória Flash do microcontrolador.
+- **Regra Estrita de Streaming**: Em loops de animação ou projeção de GIFs a 25 FPS, o host transmite unicamente os 7 pacotes de `Opcode 0x0B` diretamente ao buffer volátil em RAM do MCU. **O envio contínuo de `Opcode 0x02` é terminantemente proibido**, garantindo vida útil infinita para a memória interna do teclado.

@@ -3,6 +3,9 @@ use thiserror::Error;
 
 pub use hidapi;
 
+pub mod matrix;
+pub use matrix::*;
+
 /// EVision Semiconductor (Fabricante do controlador USB do teclado físico AK820)
 pub const AK820_VID: u16 = 0x320F;
 pub const AK820_PID: u16 = 0x505B;
@@ -28,7 +31,10 @@ pub const REPORT_ID_COMMAND: u8 = 0x04;
 pub const OPCODE_BEGIN_TRANSACTION: u8 = 0x01;
 pub const OPCODE_COMMIT_TRANSACTION: u8 = 0x02;
 pub const OPCODE_SET_LIGHTING: u8 = 0x06;
+pub const OPCODE_KEY_MATRIX_MAPPING: u8 = 0x07;
+pub const OPCODE_SET_CUSTOM_RGB_MATRIX: u8 = 0x0B;
 pub const OPCODE_HEARTBEAT_POLL: u8 = 0x1A;
+pub const OPCODE_GET_LED_MAPPING: u8 = 0x1B;
 
 #[derive(Error, Debug)]
 pub enum ProtocolError {
@@ -48,6 +54,7 @@ pub enum ProtocolError {
 pub enum LightingMode {
     Static = 0x06,
     Rain = 0x0F,
+    Custom = 0x14, // Modo 20: Matriz Customizada / Individual por Tecla
 }
 
 /// Representa a cor de um LED individual na matriz.
@@ -152,6 +159,42 @@ pub fn build_lighting_packet(
     buf
 }
 
+/// Constrói os 7 pacotes HID (Opcode 0x0B) contendo o array serializado de cores RGB da matriz.
+/// Total de 384 bytes (128 posições x 3 bytes R, G, B).
+pub fn build_custom_matrix_packets(
+    colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+) -> [[u8; HID_REPORT_PAYLOAD_SIZE]; 7] {
+    let mut raw_rgb = [0u8; TOTAL_PHYSICAL_LEDS * 3];
+    for (i, c) in colors.iter().enumerate() {
+        raw_rgb[i * 3] = c.r;
+        raw_rgb[i * 3 + 1] = c.g;
+        raw_rgb[i * 3 + 2] = c.b;
+    }
+
+    let mut packets = [[0u8; HID_REPORT_PAYLOAD_SIZE]; 7];
+    const CHUNK_SIZE: usize = 56;
+    let mut offset = 0usize;
+
+    for pkt in packets.iter_mut() {
+        let chunk_len = (raw_rgb.len() - offset).min(CHUNK_SIZE);
+        pkt[0] = REPORT_ID_COMMAND;
+        pkt[3] = OPCODE_SET_CUSTOM_RGB_MATRIX;
+        pkt[4] = chunk_len as u8;
+        pkt[5] = (offset & 0xFF) as u8;
+        pkt[6] = ((offset >> 8) & 0xFF) as u8;
+        pkt[7] = 0x00;
+        pkt[8..8 + chunk_len].copy_from_slice(&raw_rgb[offset..offset + chunk_len]);
+
+        let sum = calculate_checksum(pkt);
+        pkt[1] = (sum & 0xFF) as u8;
+        pkt[2] = ((sum >> 8) & 0xFF) as u8;
+
+        offset += chunk_len;
+    }
+
+    packets
+}
+
 /// Handle conectado ao teclado AK820 na interface proprietária de controle.
 pub struct Ak820Device {
     device: hidapi::HidDevice,
@@ -174,6 +217,16 @@ impl Ak820Device {
             vid: AK820_VID,
             pid: AK820_PID,
         })
+    }
+
+    /// Retorna uma referência mutável ao handle de dispositivo HID subjacente.
+    pub fn device_handle(&mut self) -> &mut hidapi::HidDevice {
+        &mut self.device
+    }
+
+    /// Escreve um pacote bruto diretamente no dispositivo HID.
+    pub fn write_raw(&mut self, data: &[u8]) -> Result<usize, ProtocolError> {
+        self.device.write(data).map_err(ProtocolError::from)
     }
 
     /// Envia uma sequência transacional completa de alteração de iluminação.
@@ -199,6 +252,41 @@ impl Ak820Device {
     /// Define a cor estática global do teclado (Modo Normal, brilho e velocidade máximos).
     pub fn set_static_color(&mut self, color: RgbColor) -> Result<(), ProtocolError> {
         self.set_lighting(LightingMode::Static, 4, 4, color)
+    }
+
+    /// Ativa o modo de matriz customizada (Modo 20 / 0x14) no microcontrolador.
+    pub fn enable_custom_lighting_mode(&mut self) -> Result<(), ProtocolError> {
+        let p_begin = build_begin_transaction_packet();
+        self.device.write(&p_begin)?;
+
+        let mut p_mode = [0u8; HID_REPORT_PAYLOAD_SIZE];
+        p_mode[0] = REPORT_ID_COMMAND;
+        p_mode[3] = OPCODE_SET_LIGHTING;
+        p_mode[4] = 0x1D;
+        p_mode[9] = LightingMode::Custom as u8;
+        p_mode[10] = 4; // Brilho máximo
+        p_mode[11] = 4; // Velocidade
+        let sum = calculate_checksum(&p_mode);
+        p_mode[1] = (sum & 0xFF) as u8;
+        p_mode[2] = ((sum >> 8) & 0xFF) as u8;
+        self.device.write(&p_mode)?;
+        Ok(())
+    }
+
+    /// Envia um quadro completo de cores para a matriz de 128 LEDs via Opcode 0x0B.
+    ///
+    /// OBSERVAÇÃO CRÍTICA (Prevenção de desgaste de Flash):
+    /// Não emite Opcode 0x02 (Commit), operando diretamente no buffer volátil de RAM
+    /// do controlador do teclado para permitir projeções a 25 FPS com vida útil infinita.
+    pub fn set_custom_matrix(
+        &mut self,
+        colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+    ) -> Result<(), ProtocolError> {
+        let packets = build_custom_matrix_packets(colors);
+        for pkt in &packets {
+            self.device.write(pkt)?;
+        }
+        Ok(())
     }
 }
 
@@ -300,5 +388,30 @@ mod tests {
         assert_eq!(p[14], 0x31); // R
         assert_eq!(p[15], 0x53); // G
         assert_eq!(p[16], 0xFF); // B
+    }
+
+    #[test]
+    fn test_custom_matrix_packets_structure() {
+        let colors = [RgbColor::new(0xFF, 0x00, 0x00); TOTAL_PHYSICAL_LEDS];
+        let packets = build_custom_matrix_packets(&colors);
+        assert_eq!(packets.len(), 7);
+
+        // Verifica os offsets e tamanhos dos 7 chunks
+        let expected_offsets = [0, 56, 112, 168, 224, 280, 336];
+        let expected_lens = [56, 56, 56, 56, 56, 56, 48];
+
+        for i in 0..7 {
+            assert_eq!(packets[i][0], REPORT_ID_COMMAND);
+            assert_eq!(packets[i][3], OPCODE_SET_CUSTOM_RGB_MATRIX);
+            assert_eq!(packets[i][4], expected_lens[i]);
+
+            let offset = (packets[i][5] as usize) | ((packets[i][6] as usize) << 8);
+            assert_eq!(offset, expected_offsets[i]);
+
+            // Valida que o checksum calculado bate com os bytes 1 e 2
+            let expected_sum = calculate_checksum(&packets[i]);
+            let packet_sum = (packets[i][1] as u16) | ((packets[i][2] as u16) << 8);
+            assert_eq!(packet_sum, expected_sum);
+        }
     }
 }
