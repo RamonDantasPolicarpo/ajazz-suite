@@ -9,10 +9,26 @@ Este documento formaliza todas as decisões acordadas na rodada de alinhamento t
 - **Dimensões:** Janela compacta e moderna (~900 x 600 px), com proporções equilibradas e foco em utilidade.
 - **Identidade Visual:** *Dark Mode* nativo elegante, minimalista (estética utilitária inspirada em ferramentas profissionais como Linear e Raycast), evitando saturações e clichês de estética "gamer pesada".
 - **Framework de Renderização:** **Slint** (binário Rust nativo, aceleração gráfica sem Chromium/WebViews, tempo de inicialização instantâneo).
+- **Tipografia:** `JetBrains Mono` com fallback para `ui-monospace, monospace`, garantindo alinhamento tabular preciso de valores (DPI, FPS, Bateria %, ms de debounce).
 - **Ciclo de Vida:**
   - O botão de fechar (`X`) fecha a interface e desaloca todos os recursos gráficos da memória RAM.
   - A interface reside no **System Tray** (bandeja do Windows), permitindo reabertura instantânea com clique duplo ou menu de contexto.
   - O **Daemon** em segundo plano permanece rodando de forma headless (< 10 MB de RAM, 0% CPU em idle).
+
+### 1.1 Tokens de Cores Monocromáticas (Grafite Neutro)
+
+A interface utiliza uma paleta grafite fosca (evitando preto puro absoluto), com contraste equilibrado e isolamento estrito de cor:
+
+| Elemento | Hex | Propósito Visual |
+| :--- | :--- | :--- |
+| **Background Base** | `#18181B` | Fundo principal da janela (grafite escuro fosco, ~10% de luminância). |
+| **Superfícies / Cards** | `#222227` | Painéis elevados, sidebar e base do teclado. |
+| **Bordas / Linhas** | `#32323A` | Divisórias e contornos em *hairline* fina (1px). |
+| **Hover / Destaque** | `#2B2B33` | Estado ativo/hover de botões, abas e sliders. |
+| **Texto Primário** | `#F4F4F5` | Títulos, valores ativos e dados tabulares. |
+| **Texto Secundário** | `#A1A1AA` | Descrições e rótulos de controle. |
+| **Texto Mudo / Labels** | `#71717A` | Unidades (`ms`, `FPS`, `DPI`), atalhos e placeholders. |
+| **Isolamento de Cor** | Funcional | A interface em si é 100% monocromática. A cor só existe nos LEDs físicos das teclas e indicadores críticos. |
 
 ---
 
