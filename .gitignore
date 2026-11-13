@@ -18,3 +18,7 @@ __pycache__/
 # Logs e arquivos de sistema
 *.log
 .gemini/
+
+# Arquivos de software oficial e IDEs
+AK820_RGB_Keyboard/
+.claude/
