@@ -1,0 +1,20 @@
+# Ignorar arquivos temporários de engenharia reversa e builds do Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Wireshark / USB Captures grandes
+*.pcapng
+*.pcap
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Ghidra cache
+*.gpr
+*.rep/
+
+# Logs e arquivos de sistema
+*.log
+.gemini/
