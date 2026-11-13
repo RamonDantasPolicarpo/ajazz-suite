@@ -1,0 +1,10 @@
+[package]
+name = "ajazz-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hidapi = { version = "2.6", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"

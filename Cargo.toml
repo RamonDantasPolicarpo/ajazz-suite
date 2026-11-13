@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ajazz-protocol",
+    "crates/ajazz-daemon",
+    "crates/ajazz-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
