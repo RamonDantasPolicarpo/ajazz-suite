@@ -4,6 +4,23 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
+## ⚠️ GUIA RÁPIDO PARA DEPOIS DE REINICIAR O PC
+
+Assim que o computador ligar com o driver USBPcap ativo:
+
+1. **Abrir o Wireshark**:
+   - Na lista de interfaces, dê dois cliques em **USBPcap1** (ou a porta USB dos seus periféricos) para iniciar a gravação.
+2. **Disparar o Pacote no App da Ajazz**:
+   - Abra o software oficial: `AK820_RGB_Keyboard\AJAZZ AK820 有线RGB Keyboard.exe`.
+   - Vá na aba de iluminação, escolha o modo **Estático**, selecione a cor **Vermelha pura (`#FF0000`)** e clique em **Salvar / Aplicar**.
+3. **Parar e Salvar a Captura**:
+   - No Wireshark, clique no botão vermelho quadrado para parar.
+   - Salve a captura em: `docs/captures/ak820_red.pcapng` (ou copie os 64 bytes do payload de saída e cole aqui no chat).
+4. **Voltar ao Antigravity**:
+   - Diga que reiniciou e envie o arquivo/bytes para prosseguirmos com a implementação em Rust.
+
+---
+
 ## 1. Posição Atual: Marco 1 (Protocolo & Engenharia Reversa)
 
 - **Fase:** Captura e decodificação do protocolo USB HID do teclado AK820.
