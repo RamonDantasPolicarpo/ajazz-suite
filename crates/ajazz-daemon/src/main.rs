@@ -1,4 +1,5 @@
 mod device_manager;
+mod gif_decoder;
 mod ipc;
 
 use device_manager::{run_device_actor, DeviceCommand};
@@ -20,11 +21,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Canal IPC Named Pipe: {}", IPC_PIPE_NAME);
 
     // Canal MPSC para isolar o hardware USB em um Actor exclusivo
-    let (cmd_tx, cmd_rx) = mpsc::channel::<DeviceCommand>(32);
+    let (cmd_tx, cmd_rx) = mpsc::channel::<DeviceCommand>(64);
 
     // Inicia o Actor de controle do hardware
+    let actor_tx = cmd_tx.clone();
     tokio::spawn(async move {
-        run_device_actor(cmd_rx).await;
+        run_device_actor(actor_tx, cmd_rx).await;
     });
 
     // Inicia o servidor IPC Named Pipe do Windows
@@ -123,6 +125,51 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     },
                 }
             }
+            Ok(IpcRequest::SetKeyMatrix { colors }) => {
+                let mut matrix = [ajazz_protocol::RgbColor::default(); ajazz_protocol::TOTAL_PHYSICAL_LEDS];
+                for (i, c) in colors.into_iter().enumerate() {
+                    if i < matrix.len() {
+                        matrix[i] = c;
+                    }
+                }
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx.send(DeviceCommand::SetKeyMatrix(matrix, reply_tx)).await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: "Matriz customizada aplicada com sucesso".into(),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha interna ao enviar matriz".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::PlayGif { path, fps }) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx.send(DeviceCommand::PlayGif(path, fps.unwrap_or(25), reply_tx)).await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: "Reprodução de GIF iniciada a 25 FPS".into(),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha interna ao iniciar GIF".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::StopGif) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx.send(DeviceCommand::StopGif(reply_tx)).await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: "Reprodução de GIF interrompida".into(),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha interna ao parar GIF".into(),
+                    },
+                }
+            }
             Ok(IpcRequest::GetStatus) => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = cmd_tx.send(DeviceCommand::GetStatus(reply_tx)).await;
@@ -132,6 +179,7 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                         device_name: st.device_name,
                         current_color: st.current_color,
                         current_mode: st.current_mode,
+                        is_playing_gif: st.is_playing_gif,
                     },
                     Err(_) => IpcResponse::Error {
                         error: "Falha ao consultar status do dispositivo".into(),

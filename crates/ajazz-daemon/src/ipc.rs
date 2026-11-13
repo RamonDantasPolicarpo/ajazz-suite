@@ -19,6 +19,14 @@ pub enum IpcRequest {
         speed: u8,
         color: RgbColor,
     },
+    SetKeyMatrix {
+        colors: Vec<RgbColor>,
+    },
+    PlayGif {
+        path: String,
+        fps: Option<u8>,
+    },
+    StopGif,
     GetStatus,
 }
 
@@ -37,6 +45,7 @@ pub enum IpcResponse {
         device_name: String,
         current_color: Option<RgbColor>,
         current_mode: Option<LightingMode>,
+        is_playing_gif: bool,
     },
     Pong,
 }

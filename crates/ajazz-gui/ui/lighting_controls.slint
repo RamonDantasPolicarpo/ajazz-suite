@@ -23,9 +23,19 @@ export component LightingControls inherits Rectangle {
     in-out property <int> brightness: 4;
     in-out property <int> speed: 4;
 
+    // Propriedades do GIF Player
+    in-out property <string> gif-path: "sample_wave.gif";
+    in-out property <int> gif-fps: 25;
+    in-out property <bool> is-playing-gif: false;
+
     callback color-selected(color);
     callback mode-changed(int);
     callback apply-clicked();
+
+    // Callbacks do GIF Player
+    callback select-gif-clicked();
+    callback play-gif-clicked(string, int);
+    callback stop-gif-clicked();
 
     width: 604px; // Alinhamento exato com a largura do KeyboardView
     background: Theme.surface;
@@ -132,8 +142,8 @@ export component LightingControls inherits Rectangle {
             background: Theme.border;
         }
 
-        // Seção de Cores Rápidas
-        HorizontalLayout {
+        // Seção para Modos 0 e 1: Paleta Estática / Efeitos
+        if (root.active-mode != 2) : HorizontalLayout {
             spacing: 12px;
             alignment: start;
 
@@ -235,6 +245,253 @@ export component LightingControls inherits Rectangle {
                         root.apply-clicked();
                     }
                 }
+            }
+        }
+
+        // Seção para Modo 2: Controles do GIF Player a 25 FPS
+        if (root.active-mode == 2) : VerticalLayout {
+            spacing: 10px;
+
+            // Linha 1: Arquivo GIF e botão Procurar
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: stretch;
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "ARQUIVO GIF:";
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                    }
+                }
+
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.surface-raised;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    clip: true;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: start;
+
+                        Text {
+                            text: root.gif-path != "" ? root.gif-path : "Nenhum arquivo GIF selecionado";
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            color: root.gif-path != "" ? Theme.text-primary : Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 90px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: browse-touch.has-hover ? Theme.surface-hover : Theme.surface-raised;
+                    border-color: Theme.border-light;
+                    border-width: 1px;
+
+                    Text {
+                        text: "PROCURAR...";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    browse-touch := TouchArea {
+                        clicked => {
+                            root.select-gif-clicked();
+                        }
+                    }
+                }
+            }
+
+            // Linha 2: Configuração de FPS e Controles de Ação
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "TAXA:";
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            font-weight: 700;
+                            color: Theme.text-muted;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 56px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: root.gif-fps == 15 ? Theme.surface-active : Theme.surface-raised;
+                        border-color: root.gif-fps == 15 ? Theme.border-light : Theme.border;
+                        border-width: 1px;
+                        Text {
+                            text: "15 FPS";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 600;
+                            color: root.gif-fps == 15 ? Theme.text-primary : Theme.text-secondary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        TouchArea { clicked => { root.gif-fps = 15; } }
+                    }
+
+                    Rectangle {
+                        width: 56px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: root.gif-fps == 20 ? Theme.surface-active : Theme.surface-raised;
+                        border-color: root.gif-fps == 20 ? Theme.border-light : Theme.border;
+                        border-width: 1px;
+                        Text {
+                            text: "20 FPS";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 600;
+                            color: root.gif-fps == 20 ? Theme.text-primary : Theme.text-secondary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        TouchArea { clicked => { root.gif-fps = 20; } }
+                    }
+
+                    Rectangle {
+                        width: 56px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: root.gif-fps == 25 ? Theme.surface-active : Theme.surface-raised;
+                        border-color: root.gif-fps == 25 ? Theme.border-light : Theme.border;
+                        border-width: 1px;
+                        Text {
+                            text: "25 FPS";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.gif-fps == 25 ? Theme.text-primary : Theme.text-secondary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        TouchArea { clicked => { root.gif-fps = 25; } }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    // Badge de status
+                    Rectangle {
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.surface-raised;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 5px;
+                            alignment: center;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: root.is-playing-gif ? Theme.status-online : Theme.text-muted;
+                                }
+                            }
+
+                            Text {
+                                text: root.is-playing-gif ? "REPRODUZINDO" : "PARADO";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: root.is-playing-gif ? Theme.status-online : Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if (!root.is-playing-gif) : Rectangle {
+                        width: 100px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: play-touch.has-hover ? Theme.surface-hover : Theme.surface-active;
+                        border-color: Theme.border-light;
+                        border-width: 1px;
+
+                        Text {
+                            text: "REPRODUZIR";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        play-touch := TouchArea {
+                            clicked => {
+                                root.play-gif-clicked(root.gif-path, root.gif-fps);
+                            }
+                        }
+                    }
+
+                    if (root.is-playing-gif) : Rectangle {
+                        width: 100px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: stop-touch.has-hover ? #7F1D1D : #991B1B;
+                        border-color: #EF4444;
+                        border-width: 1px;
+
+                        Text {
+                            text: "PARAR";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: #FFFFFF;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        stop-touch := TouchArea {
+                            clicked => {
+                                root.stop-gif-clicked();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Nota técnica de Flash Protection
+            Text {
+                text: "PROTEÇÃO FLASH: Buffer volátil de RAM a 25 FPS (Zero Commit • Anti-Brick Ativo)";
+                font-family: Theme.mono-font;
+                font-size: 8px;
+                color: Theme.text-muted;
             }
         }
     }

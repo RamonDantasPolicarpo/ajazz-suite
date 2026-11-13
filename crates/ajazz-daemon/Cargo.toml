@@ -9,5 +9,6 @@ ajazz-protocol = { path = "../ajazz-protocol" }
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+gif = "0.14"
 tracing = "0.1"
 tracing-subscriber = "0.3"

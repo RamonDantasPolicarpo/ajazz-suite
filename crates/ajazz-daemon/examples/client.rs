@@ -17,15 +17,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut lines = BufReader::new(reader).lines();
 
     let request = match cmd {
-        "ping" => r#"{"cmd":"ping"}"#,
-        "status" => r#"{"cmd":"get_status"}"#,
-        "red" => r#"{"cmd":"set_static_color","r":255,"g":0,"b":0}"#,
-        "green" => r#"{"cmd":"set_static_color","r":0,"g":255,"b":0}"#,
-        "blue" => r#"{"cmd":"set_static_color","r":0,"g":0,"b":255}"#,
-        "purple" => r#"{"cmd":"set_static_color","r":180,"g":0,"b":255}"#,
-        "white" => r#"{"cmd":"set_static_color","r":255,"g":255,"b":255}"#,
+        "ping" => r#"{"cmd":"ping"}"#.to_string(),
+        "status" => r#"{"cmd":"get_status"}"#.to_string(),
+        "red" => r#"{"cmd":"set_static_color","r":255,"g":0,"b":0}"#.to_string(),
+        "green" => r#"{"cmd":"set_static_color","r":0,"g":255,"b":0}"#.to_string(),
+        "blue" => r#"{"cmd":"set_static_color","r":0,"g":0,"b":255}"#.to_string(),
+        "purple" => r#"{"cmd":"set_static_color","r":180,"g":0,"b":255}"#.to_string(),
+        "white" => r#"{"cmd":"set_static_color","r":255,"g":255,"b":255}"#.to_string(),
+        "play" => {
+            let path = args.get(2).map(|s| s.as_str()).unwrap_or("sample_wave.gif");
+            format!(r#"{{"cmd":"play_gif","path":"{}","fps":25}}"#, path.replace('\\', "\\\\"))
+        }
+        "stop" => r#"{"cmd":"stop_gif"}"#.to_string(),
         other => {
-            eprintln!("Comando desconhecido: '{other}'. Use ping, status, red, green, blue, purple, white.");
+            eprintln!("Comando desconhecido: '{other}'. Use ping, status, red, green, blue, purple, white, play [path], stop.");
             return Ok(());
         }
     };
