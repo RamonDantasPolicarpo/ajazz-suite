@@ -4,15 +4,15 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Marco 1 (Protocolo & Engenharia Reversa) - Concluído para Cor Estática
+## 1. Posição Atual: Marco 1 (Protocolo) & Marco 2 (Especificação da GUI) Concluídos
 
-- **Fase:** Engenharia reversa concluída com sucesso para o canal de iluminação estática e modos globais do AK820.
-- **Evidência Decodificada (`docs/captures/ak820_red.pcapng`):**
-  - **Interface:** `UsagePage=0xFF1C, Usage=0x0092`, Interface 1, Report ID `0x04`.
-  - **Checksum:** 16-bit Little-Endian Sum de `payload[3..64]`.
-  - **Transação:** Sequência de 3 pacotes: `Begin (0x01)` -> `Set Lighting (0x06)` -> `Commit (0x02)`.
-  - **Status:** Testado e validado em tempo real com o binário Rust `set_color` alterando a cor do teclado para vermelho e azul.
-- **Bloqueio/Aguardando:** Nenhum bloqueio para cor estática.
+- **Engenharia Reversa USB (AK820):**
+  - Canal de iluminação estática completamente decodificado via `ak820_red.pcapng`.
+  - Testado e validado em tempo real via Rust nativo (`crates/ajazz-protocol/examples/set_color`).
+  - Proteção estrita contra brick e desgaste de memória Flash documentada no código e no [AGENTS.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/AGENTS.md).
+- **Alinhamento e Especificação da GUI (`Grill Me`):**
+  - Rodada completa de 11 decisões concluída e documentada formalmente em [gui_specification.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/ui/gui_specification.md).
+- **Bloqueio/Aguardando:** Confirmação do usuário sobre a especificação da GUI para iniciar a implementação da arquitetura Slint / Daemon IPC.
 
 ---
 
@@ -27,17 +27,15 @@ Detectados via ferramenta interna de enumeração (`cargo run -p ajazz-protocol 
 
 ---
 
-## 3. Decisões Arquiteturais Consolidadas
+## 3. Decisões de Arquitetura da Interface Gráfica (Alinhadas no Grill Me)
 
-1. **Separação Daemon vs GUI:**
-   - **Daemon (`ajazz-daemon`):** Processo headless de baixo consumo (< 10 MB RAM, 0% CPU em idle) responsável por iluminação, loop de GIFs e monitor de switches.
-   - **GUI (`ajazz-gui`):** Construída com **Slint** (binário nativo sem Chromium/WebViews), aberta apenas sob demanda.
-   - **Comunicação:** IPC via Named Pipes nativos do Windows (`\\.\pipe\ajazz-daemon`) com payloads em JSON.
-2. **Motor de Animação de GIFs:**
-   - Projeção bilinear de quadros na matriz espacial física de teclas (~82 teclas) travada em 25 FPS para não saturar o barramento USB.
-3. **Monitor de Diagnóstico de Switches e Cliques:**
-   - Teclado: Monitoramento passivo de switch chattering em segundo plano para identificar switches específicos para substituição física (hot-swap), sem filtros de software artificiais.
-   - Mouse: Detecção contínua do estado preso do botão esquerdo correlacionada com a telemetria de nível de bateria.
+1. **Janela e Visual:** Slint nativo, janela compacta (~900x600 px), Dark Mode limpo (estilo Raycast/Linear).
+2. **Navegação:** Sidebar vertical com seções para Teclado AK820, Mouse NearLink e Ajustes/Daemon.
+3. **Ciclo de Vida:** Fechar no `X` encerra o processo gráfico da GUI e mantém ícone no System Tray para economizar RAM.
+4. **Teclado:** Layout 75% vetorial interativo com preview ao vivo de cores e GIFs + destaque visual para chattering.
+5. **GIF Player:** Drag & Drop direto sobre o teclado, limitado a 25 FPS para proteger o barramento USB.
+6. **Mouse:** Mostrador de bateria com barra e %, seletor de estágios de DPI e painel de diagnóstico para clique preso.
+7. **IPC e Persistência:** JSON em `%APPDATA%\ajazz-companion\config.json`, comunicação via `\\.\pipe\ajazz-daemon`.
 
 ---
 
@@ -48,14 +46,14 @@ Detectados via ferramenta interna de enumeração (`cargo run -p ajazz-protocol 
 - `8f8baf2`: `feat: identify physical AK820 and NearLink mouse VID/PID and vendor usage pages`
 - `e547c98`: `docs: document hardware endpoints and vendor usage pages for AK820 and NearLink mouse`
 - `4248d45`: `chore: add docs captures directory for usb traffic traces`
-- `docs/protocol/hid_protocol.md`: Documentação matemática e estrutural completa do protocolo de iluminação e checksum do AK820.
-- `crates/ajazz-protocol`: Implementação da API de controle de iluminação (`Ak820Device`, `calculate_checksum`, construtores de pacotes transacionais, testes de unidade).
-- `examples/set_color`: Utilitário CLI para troca de cores em tempo real via Rust nativo.
+- `5b707b3`: `feat: decode AK820 lighting protocol and implement static color control in Rust`
+- `f55ddd7`: `docs: add anti-brick and flash wear-out safety rules`
+- `docs/ui/gui_specification.md`: Especificação técnica e visual completa da interface gráfica.
 
 ---
 
 ## 5. Próximos Passos Imediatos
 
-1. Mapeamento da matriz de LEDs individuais por tecla (Opcode `0x1B` ou pacote de Custom Lighting para projeção de GIFs).
-2. Construção do servidor IPC no Daemon (`ajazz-daemon`) via Named Pipe do Windows.
-3. Integração inicial da UI Slint com o Daemon para controle de iluminação.
+1. Confirmação do usuário sobre o documento de especificação da GUI.
+2. Implementação da casca Slint (`ajazz-gui`) com a Sidebar e layout base do teclado 75%.
+3. Implementação do servidor IPC Named Pipe no Daemon (`ajazz-daemon`).
