@@ -1,10 +1,20 @@
 use std::fmt;
 use thiserror::Error;
 
-/// Sonix Technology Co., Ltd. (fabricante do controlador USB do AK820)
-pub const AJAZZ_VID: u16 = 0x0C45;
-/// AJAZZ AK820 Wired RGB Keyboard
-pub const AK820_PID: u16 = 0x1007;
+/// EVision Semiconductor (Fabricante do controlador USB do teclado físico AK820 detectado)
+pub const AK820_VID: u16 = 0x320F;
+pub const AK820_PID: u16 = 0x505B;
+/// UsagePage proprietária para relatórios de controle e iluminação do AK820
+pub const AK820_VENDOR_USAGE_PAGE: u16 = 0xFF1C;
+pub const AK820_VENDOR_USAGE: u16 = 0x0092;
+
+/// AJAZZ NearLink Mouse (Mouse sem fio NearLink detectado)
+pub const MOUSE_NEARLINK_VID: u16 = 0x7768;
+pub const MOUSE_NEARLINK_PID: u16 = 0x642E;
+
+/// Sonix Technology Co., Ltd. (perfil de fallback presente nos arquivos padrão)
+pub const SONIX_FALLBACK_VID: u16 = 0x0C45;
+pub const SONIX_FALLBACK_PID: u16 = 0x1007;
 
 /// Tamanho padrão do buffer de dados de um HID Report do teclado.
 pub const HID_REPORT_PAYLOAD_SIZE: usize = 64;
@@ -99,9 +109,17 @@ pub struct DeviceProfile {
 }
 
 pub const PROFILE_AK820: DeviceProfile = DeviceProfile {
-    name: "AJAZZ AK820 Wired RGB",
-    vid: AJAZZ_VID,
+    name: "AJAZZ AK820 (EVision)",
+    vid: AK820_VID,
     pid: AK820_PID,
     matrix_rows: 6,
     matrix_cols: 16,
+};
+
+pub const PROFILE_MOUSE_NEARLINK: DeviceProfile = DeviceProfile {
+    name: "AJAZZ NearLink Mouse",
+    vid: MOUSE_NEARLINK_VID,
+    pid: MOUSE_NEARLINK_PID,
+    matrix_rows: 1,
+    matrix_cols: 1,
 };
