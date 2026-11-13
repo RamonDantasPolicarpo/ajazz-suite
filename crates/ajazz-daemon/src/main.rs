@@ -1,9 +1,13 @@
-use ajazz_protocol::PROFILE_AK820;
-use std::time::Duration;
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+mod device_manager;
+mod ipc;
 
-pub const IPC_PIPE_NAME: &str = r"\\.\pipe\ajazz-daemon";
+use device_manager::{run_device_actor, DeviceCommand};
+use ipc::{IpcRequest, IpcResponse, IPC_PIPE_NAME};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{error, info, warn, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,14 +16,138 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    info!(
-        "Iniciando Daemon para {} (VID=0x{:04X}, PID=0x{:04X})",
-        PROFILE_AK820.name, PROFILE_AK820.vid, PROFILE_AK820.pid
-    );
-    info!("Canal IPC configurado em: {}", IPC_PIPE_NAME);
+    info!("=== AJAZZ Background Daemon ===");
+    info!("Canal IPC Named Pipe: {}", IPC_PIPE_NAME);
 
-    // Loop leve de segundo plano (0% CPU em idle)
+    // Canal MPSC para isolar o hardware USB em um Actor exclusivo
+    let (cmd_tx, cmd_rx) = mpsc::channel::<DeviceCommand>(32);
+
+    // Inicia o Actor de controle do hardware
+    tokio::spawn(async move {
+        run_device_actor(cmd_rx).await;
+    });
+
+    // Inicia o servidor IPC Named Pipe do Windows
+    run_ipc_server(cmd_tx).await?;
+
+    Ok(())
+}
+
+async fn run_ipc_server(
+    cmd_tx: mpsc::Sender<DeviceCommand>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(IPC_PIPE_NAME)?;
+
+    info!("Aguardando conexões no Named Pipe...");
+
     loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        // Aguarda conexão de cliente (GUI ou scripts)
+        if let Err(e) = server.connect().await {
+            warn!("Erro ao aguardar conexão no pipe: {e}");
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            continue;
+        }
+
+        let connected_client = server;
+
+        // Cria a próxima instância do pipe para permitir novos clientes
+        server = match ServerOptions::new().create(IPC_PIPE_NAME) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Falha ao criar próxima instância do Named Pipe: {e}");
+                break;
+            }
+        };
+
+        let tx = cmd_tx.clone();
+        tokio::spawn(async move {
+            handle_client(connected_client, tx).await;
+        });
+    }
+
+    Ok(())
+}
+
+async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand>) {
+    let (reader, mut writer) = tokio::io::split(pipe);
+    let mut lines = BufReader::new(reader).lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let req: Result<IpcRequest, _> = serde_json::from_str(line);
+        let resp = match req {
+            Ok(IpcRequest::Ping) => IpcResponse::Pong,
+            Ok(IpcRequest::SetStaticColor { r, g, b }) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx
+                    .send(DeviceCommand::SetStaticColor(
+                        ajazz_protocol::RgbColor::new(r, g, b),
+                        reply_tx,
+                    ))
+                    .await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: format!("Cor estática definida para R={r}, G={g}, B={b}"),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha de comunicação interna com o gerenciador de hardware".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::SetLighting {
+                mode,
+                brightness,
+                speed,
+                color,
+            }) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx
+                    .send(DeviceCommand::SetLighting(
+                        mode, brightness, speed, color, reply_tx,
+                    ))
+                    .await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: "Modo de iluminação aplicado com sucesso".into(),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha interna no subsistema de hardware".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::GetStatus) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx.send(DeviceCommand::GetStatus(reply_tx)).await;
+                match reply_rx.await {
+                    Ok(st) => IpcResponse::Status {
+                        device_connected: st.connected,
+                        device_name: st.device_name,
+                        current_color: st.current_color,
+                        current_mode: st.current_mode,
+                    },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha ao consultar status do dispositivo".into(),
+                    },
+                }
+            }
+            Err(e) => IpcResponse::Error {
+                error: format!("Payload JSON inválido: {e}"),
+            },
+        };
+
+        if let Ok(mut json) = serde_json::to_string(&resp) {
+            json.push('\n');
+            if writer.write_all(json.as_bytes()).await.is_err() {
+                break;
+            }
+        }
     }
 }
