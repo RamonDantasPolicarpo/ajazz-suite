@@ -6,10 +6,10 @@ import { MouseView } from "mouse_view.slint";
 import { SettingsView } from "settings_view.slint";
 
 export component MainWindow inherits Window {
-    title: "AJAZZ Unified Suite";
-    preferred-width: 940px;
-    preferred-height: 620px;
-    min-width: 900px;
+    title: "AJAZZ Companion Suite";
+    preferred-width: 980px;
+    preferred-height: 640px;
+    min-width: 940px;
     min-height: 600px;
     background: Theme.background;
 
@@ -38,8 +38,8 @@ export component MainWindow inherits Window {
 
             // Aba 0: Teclado AK820
             if (root.active-tab == 0) : VerticalLayout {
-                padding: 20px;
-                spacing: 14px;
+                padding: 24px;
+                spacing: 16px;
                 alignment: start;
 
                 // Título e status do dispositivo
@@ -47,7 +47,7 @@ export component MainWindow inherits Window {
                     alignment: space-between;
 
                     VerticalLayout {
-                        spacing: 2px;
+                        spacing: 3px;
                         Text {
                             text: "AJAZZ AK820 75% MECHANICAL KEYBOARD";
                             font-family: Theme.mono-font;
@@ -64,8 +64,8 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        width: 90px;
-                        height: 22px;
+                        width: 96px;
+                        height: 24px;
                         border-radius: Theme.radius-sm;
                         background: Theme.surface;
                         border-color: Theme.border;
@@ -83,7 +83,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "CONECTADO";
                                 font-family: Theme.mono-font;
-                                font-size: 8px;
+                                font-size: 9px;
                                 font-weight: 700;
                                 color: Theme.text-secondary;
                             }
