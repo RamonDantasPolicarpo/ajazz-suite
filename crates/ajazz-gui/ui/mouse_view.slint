@@ -1,0 +1,152 @@
+import { Theme } from "theme.slint";
+
+export component MouseView inherits Rectangle {
+    in property <int> battery-percent: 85;
+    in property <int> current-dpi: 1600;
+    in property <bool> is-left-clicked: false;
+
+    background: Theme.background;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        Text {
+            text: "AJAZZ NEARLINK MOUSE";
+            font-family: Theme.mono-font;
+            font-size: 14px;
+            font-weight: 700;
+            color: Theme.text-primary;
+        }
+
+        Text {
+            text: "Telemetria sem fio, estágios de DPI e diagnóstico de micro-switch.";
+            font-family: Theme.mono-font;
+            font-size: 10px;
+            color: Theme.text-secondary;
+        }
+
+        Rectangle { height: 8px; }
+
+        // Grid de Cards
+        HorizontalLayout {
+            spacing: 16px;
+
+            // Card 1: Bateria
+            Rectangle {
+                width: 280px;
+                height: 140px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "TELEMETRIA DE BATERIA";
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Text {
+                            text: root.battery-percent + "%";
+                            font-family: Theme.mono-font;
+                            font-size: 32px;
+                            font-weight: 800;
+                            color: Theme.text-primary;
+                        }
+
+                        Text {
+                            text: "RESTANTE";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                            vertical-alignment: bottom;
+                        }
+                    }
+
+                    // Barra de progresso da bateria
+                    Rectangle {
+                        height: 8px;
+                        border-radius: 4px;
+                        background: Theme.surface-raised;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        Rectangle {
+                            width: (parent.width - 2px) * (root.battery-percent / 100);
+                            height: parent.height - 2px;
+                            x: 1px;
+                            y: 1px;
+                            border-radius: 3px;
+                            background: root.battery-percent > 20 ? Theme.status-online : Theme.status-error;
+                        }
+                    }
+                }
+            }
+
+            // Card 2: Diagnóstico do Botão Esquerdo (Clique Preso)
+            Rectangle {
+                width: 320px;
+                height: 140px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "DIAGNÓSTICO DO BOTÃO ESQUERDO";
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 6px;
+                            background: root.is-left-clicked ? Theme.status-warning : Theme.surface-raised;
+                            border-color: Theme.border;
+                            border-width: 1px;
+                            y: 4px;
+                        }
+
+                        Text {
+                            text: root.is-left-clicked ? "BOTÃO PRESSIONADO" : "ESTADO: LIVRE (NORMAL)";
+                            font-family: Theme.mono-font;
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: root.is-left-clicked ? Theme.status-warning : Theme.text-primary;
+                        }
+                    }
+
+                    Text {
+                        text: "Monitorando continuidade do sinal do switch para prevenir comportamento de clique preso.";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: Theme.text-secondary;
+                    }
+                }
+            }
+        }
+    }
+}

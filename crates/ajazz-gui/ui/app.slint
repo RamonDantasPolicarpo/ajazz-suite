@@ -1,14 +1,133 @@
+import { Theme } from "theme.slint";
+import { Sidebar } from "sidebar.slint";
+import { KeyboardView } from "keyboard_view.slint";
+import { LightingControls } from "lighting_controls.slint";
+import { MouseView } from "mouse_view.slint";
+import { SettingsView } from "settings_view.slint";
+
 export component MainWindow inherits Window {
     title: "AJAZZ Unified Suite";
-    preferred-width: 800px;
-    preferred-height: 520px;
-    background: #121214;
+    preferred-width: 940px;
+    preferred-height: 620px;
+    min-width: 900px;
+    min-height: 600px;
+    background: Theme.background;
 
-    Text {
-        text: "AJAZZ AK820 & Mouse Controller";
-        color: #ffffff;
-        font-size: 18px;
-        x: 24px;
-        y: 20px;
+    // Estado da aplicação
+    in-out property <int> active-tab: 0;
+    in-out property <color> current-color: #FF0000;
+    in-out property <bool> has-color: true;
+    in-out property <bool> daemon-online: true;
+    in-out property <string> chattering-alert: "";
+
+    // Callbacks para o backend Rust
+    callback apply-color(color);
+    callback set-mode(int);
+    callback reconnect-daemon();
+
+    HorizontalLayout {
+        // Barra Lateral de Navegação
+        Sidebar {
+            active-tab <=> root.active-tab;
+            daemon-online: root.daemon-online;
+        }
+
+        // Área Central de Conteúdo
+        Rectangle {
+            background: Theme.background;
+
+            // Aba 0: Teclado AK820
+            if (root.active-tab == 0) : VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+                alignment: start;
+
+                // Título e status do dispositivo
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: "AJAZZ AK820 75% MECHANICAL KEYBOARD";
+                            font-family: Theme.mono-font;
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                        }
+                        Text {
+                            text: "EVision Semiconductor (VID 0x320F / PID 0x505B) • UsagePage 0xFF1C";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-secondary;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 90px;
+                        height: 22px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.surface;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: center;
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.status-online;
+                            }
+                            Text {
+                                text: "CONECTADO";
+                                font-family: Theme.mono-font;
+                                font-size: 8px;
+                                font-weight: 700;
+                                color: Theme.text-secondary;
+                            }
+                        }
+                    }
+                }
+
+                // Layout Vetorial Físico das ~82 Teclas
+                KeyboardView {
+                    global-led-color: root.current-color;
+                    has-led: root.has-color;
+                    chattering-key: root.chattering-alert;
+                    key-clicked(key) => {
+                        // Clique na tecla
+                    }
+                }
+
+                // Painel de Controles de Iluminação
+                LightingControls {
+                    selected-color: root.current-color;
+                    color-selected(col) => {
+                        root.current-color = col;
+                        root.has-color = true;
+                        root.apply-color(col);
+                    }
+                    apply-clicked => {
+                        root.apply-color(root.current-color);
+                    }
+                    mode-changed(mode) => {
+                        root.set-mode(mode);
+                    }
+                }
+            }
+
+            // Aba 1: Mouse NearLink
+            if (root.active-tab == 1) : MouseView { }
+
+            // Aba 2: Configurações & Daemon
+            if (root.active-tab == 2) : SettingsView {
+                daemon-connected: root.daemon-online;
+                restart-daemon => {
+                    root.reconnect-daemon();
+                }
+            }
+        }
     }
 }

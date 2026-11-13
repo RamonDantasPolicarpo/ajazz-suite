@@ -1,0 +1,240 @@
+import { Theme } from "theme.slint";
+
+export component ColorSwatch inherits Rectangle {
+    in property <color> swatch-color;
+    in property <bool> is-selected: false;
+    callback clicked();
+
+    width: 24px;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: root.swatch-color;
+    border-color: root.is-selected ? Theme.text-primary : Theme.border;
+    border-width: root.is-selected ? 2px : 1px;
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component LightingControls inherits Rectangle {
+    in-out property <int> active-mode: 0; // 0 = Estático, 1 = Chuva, 2 = GIF
+    in-out property <color> selected-color: #FF0000;
+    in-out property <int> brightness: 4;
+    in-out property <int> speed: 4;
+
+    callback color-selected(color);
+    callback mode-changed(int);
+    callback apply-clicked();
+
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 14px;
+
+        // Cabeçalho dos Modos
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            Text {
+                text: "MODO DE ILUMINAÇÃO:";
+                font-family: Theme.mono-font;
+                font-size: 10px;
+                font-weight: 700;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+
+            // Tab Estático
+            Rectangle {
+                width: 90px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: root.active-mode == 0 ? Theme.surface-active : Theme.surface-raised;
+                border-color: root.active-mode == 0 ? Theme.border-light : Theme.border;
+                border-width: 1px;
+                Text {
+                    text: "ESTÁTICO";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 600;
+                    color: root.active-mode == 0 ? Theme.text-primary : Theme.text-secondary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    clicked => {
+                        root.active-mode = 0;
+                        root.mode-changed(0);
+                    }
+                }
+            }
+
+            // Tab Chuva (Rain)
+            Rectangle {
+                width: 90px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: root.active-mode == 1 ? Theme.surface-active : Theme.surface-raised;
+                border-color: root.active-mode == 1 ? Theme.border-light : Theme.border;
+                border-width: 1px;
+                Text {
+                    text: "CHUVA (RAIN)";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 600;
+                    color: root.active-mode == 1 ? Theme.text-primary : Theme.text-secondary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    clicked => {
+                        root.active-mode = 1;
+                        root.mode-changed(1);
+                    }
+                }
+            }
+
+            // Tab GIF Player
+            Rectangle {
+                width: 90px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: root.active-mode == 2 ? Theme.surface-active : Theme.surface-raised;
+                border-color: root.active-mode == 2 ? Theme.border-light : Theme.border;
+                border-width: 1px;
+                Text {
+                    text: "GIF PLAYER";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 600;
+                    color: root.active-mode == 2 ? Theme.text-primary : Theme.text-secondary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    clicked => {
+                        root.active-mode = 2;
+                        root.mode-changed(2);
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        // Seção de Cores Rápidas
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: "PALETA RÁPIDA:";
+                font-family: Theme.mono-font;
+                font-size: 10px;
+                font-weight: 700;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+
+            ColorSwatch {
+                swatch-color: #FF0000;
+                is-selected: root.selected-color == #FF0000;
+                clicked => {
+                    root.selected-color = #FF0000;
+                    root.color-selected(#FF0000);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #00FF00;
+                is-selected: root.selected-color == #00FF00;
+                clicked => {
+                    root.selected-color = #00FF00;
+                    root.color-selected(#00FF00);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #0000FF;
+                is-selected: root.selected-color == #0000FF;
+                clicked => {
+                    root.selected-color = #0000FF;
+                    root.color-selected(#0000FF);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #00FFFF;
+                is-selected: root.selected-color == #00FFFF;
+                clicked => {
+                    root.selected-color = #00FFFF;
+                    root.color-selected(#00FFFF);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #FFFF00;
+                is-selected: root.selected-color == #FFFF00;
+                clicked => {
+                    root.selected-color = #FFFF00;
+                    root.color-selected(#FFFF00);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #B400FF;
+                is-selected: root.selected-color == #B400FF;
+                clicked => {
+                    root.selected-color = #B400FF;
+                    root.color-selected(#B400FF);
+                }
+            }
+
+            ColorSwatch {
+                swatch-color: #FFFFFF;
+                is-selected: root.selected-color == #FFFFFF;
+                clicked => {
+                    root.selected-color = #FFFFFF;
+                    root.color-selected(#FFFFFF);
+                }
+            }
+
+            Rectangle { } // Spacer
+
+            // Botão Aplicar Cor
+            Rectangle {
+                width: 120px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: apply-touch.has-hover ? Theme.surface-hover : Theme.surface-active;
+                border-color: Theme.border-light;
+                border-width: 1px;
+
+                Text {
+                    text: "APLICAR COR";
+                    font-family: Theme.mono-font;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                apply-touch := TouchArea {
+                    clicked => {
+                        root.apply-clicked();
+                    }
+                }
+            }
+        }
+    }
+}

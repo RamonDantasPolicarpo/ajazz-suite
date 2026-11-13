@@ -1,0 +1,205 @@
+import { Theme } from "theme.slint";
+
+export component SidebarItem inherits Rectangle {
+    in property <string> icon-text: "";
+    in property <string> title: "";
+    in property <string> subtitle: "";
+    in property <bool> is-active: false;
+
+    callback clicked();
+
+    height: 48px;
+    border-radius: Theme.radius-md;
+    background: root.is-active ? Theme.surface-active : (touch.has-hover ? Theme.surface-hover : #00000000);
+    border-color: root.is-active ? Theme.border-light : #00000000;
+    border-width: 1px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        alignment: center;
+
+        // Tag de ícone mono
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: root.is-active ? Theme.surface-raised : Theme.surface;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            Text {
+                text: root.icon-text;
+                font-family: Theme.mono-font;
+                font-size: 11px;
+                font-weight: 700;
+                color: root.is-active ? Theme.text-primary : Theme.text-secondary;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        // Títulos
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                font-family: Theme.mono-font;
+                font-size: 11px;
+                font-weight: 600;
+                color: root.is-active ? Theme.text-primary : Theme.text-secondary;
+            }
+
+            if (root.subtitle != "") : Text {
+                text: root.subtitle;
+                font-family: Theme.mono-font;
+                font-size: 9px;
+                color: Theme.text-muted;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in-out property <int> active-tab: 0;
+    in property <bool> daemon-online: true;
+
+    callback tab-changed(int);
+
+    width: 210px;
+    background: Theme.surface;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        // Header / Logo
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            padding-bottom: 12px;
+
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                background: Theme.text-primary;
+                Text {
+                    text: "A";
+                    color: Theme.background;
+                    font-family: Theme.mono-font;
+                    font-size: 12px;
+                    font-weight: 800;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 1px;
+                Text {
+                    text: "AJAZZ COMPANION";
+                    font-family: Theme.mono-font;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+                Text {
+                    text: "UNIFIED SUITE";
+                    font-family: Theme.mono-font;
+                    font-size: 8px;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        Rectangle { height: 8px; }
+
+        // Navegação
+        SidebarItem {
+            icon-text: "KB";
+            title: "AK820 RGB";
+            subtitle: "75% Mechanical";
+            is-active: root.active-tab == 0;
+            clicked => {
+                root.active-tab = 0;
+                root.tab-changed(0);
+            }
+        }
+
+        SidebarItem {
+            icon-text: "MS";
+            title: "NEARLINK MOUSE";
+            subtitle: "Wireless 4K";
+            is-active: root.active-tab == 1;
+            clicked => {
+                root.active-tab = 1;
+                root.tab-changed(1);
+            }
+        }
+
+        SidebarItem {
+            icon-text: "CFG";
+            title: "CONFIGURAÇÕES";
+            subtitle: "Daemon & Sistema";
+            is-active: root.active-tab == 2;
+            clicked => {
+                root.active-tab = 2;
+                root.tab-changed(2);
+            }
+        }
+
+        // Espaçador elástico empurrando o rodapé para baixo
+        Rectangle { }
+
+        // Status do Daemon no Rodapé
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        Rectangle { height: 4px; }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.daemon-online ? Theme.status-online : Theme.status-warning;
+            }
+
+            Text {
+                text: root.daemon-online ? "DAEMON ONLINE" : "RECONECTANDO...";
+                font-family: Theme.mono-font;
+                font-size: 9px;
+                font-weight: 600;
+                color: root.daemon-online ? Theme.text-secondary : Theme.status-warning;
+            }
+        }
+
+        Text {
+            text: "\\\\.\\pipe\\ajazz-daemon";
+            font-family: Theme.mono-font;
+            font-size: 8px;
+            color: Theme.text-muted;
+            horizontal-alignment: center;
+        }
+    }
+}

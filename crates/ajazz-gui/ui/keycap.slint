@@ -1,0 +1,51 @@
+import { Theme } from "theme.slint";
+
+export component Keycap inherits Rectangle {
+    in property <string> label: "";
+    in property <length> key-width: 32px;
+    in property <length> key-height: 32px;
+    in property <color> led-color: #000000;
+    in property <bool> has-led: false;
+    in property <bool> is-knob: false;
+    in property <bool> has-chattering: false;
+
+    callback clicked();
+
+    width: root.key-width;
+    height: root.key-height;
+    border-radius: root.is-knob ? root.key-width / 2 : Theme.radius-sm;
+    background: touch.has-hover ? Theme.surface-hover : Theme.surface;
+
+    // Borda sólida nítida sem degradês/neon
+    border-color: root.has-chattering ? Theme.status-warning : (root.has-led ? root.led-color : Theme.border);
+    border-width: (root.has-led || root.has-chattering) ? 1.5px : 1px;
+
+    // Knob de volume giratório do AK820
+    if (root.is-knob) : Rectangle {
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.has-led ? root.led-color : Theme.text-muted;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    // Legenda da tecla
+    if (!root.is-knob) : Text {
+        text: root.label;
+        font-family: Theme.mono-font;
+        font-size: root.key-width < 34px ? 9px : 10px;
+        font-weight: 500;
+        color: root.has-chattering ? Theme.status-warning : (root.has-led ? Theme.text-primary : Theme.text-secondary);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
