@@ -46,6 +46,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `1ddf438`: `docs: adjust GUI palette to graphite-neutral dark tone and JetBrains typography`
 - `e7999c2`: `feat: implement headless ajazz-daemon with Windows Named Pipe IPC and hardware actor`
 - `a282dd7`: `feat: implement native Slint GUI with 75% AK820 layout, monochromatic graphite theme and IPC client`
+- `be2fad5`: `fix: correct AK820 75% physical keycap alignment, arrow cluster and navigation column`
 
 ---
 
