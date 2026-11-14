@@ -1,5 +1,6 @@
 use ajazz_protocol::{
-    KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
+    KeyAssignment, LightingConfig, MacroDefinition, MouseButtonSlot, MouseConfig, MouseProfile,
+    MouseStatus, RgbColor, SystemStages, UserProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,17 @@ pub enum IpcRequest {
     },
     StopGif,
     GetStatus,
+    GetMouseStatus,
+    SetMouseConfig {
+        config: MouseConfig,
+    },
+    SetMouseButton {
+        slot: u8,
+        assignment: MouseButtonSlot,
+    },
+    ResetMouseButtons,
+    SyncMouseFromDevice,
+    StartMousePairing,
 }
 
 /// Respostas enviadas de volta ao cliente pelo Daemon.
@@ -63,6 +75,11 @@ pub enum IpcResponse {
         device_name: String,
         profile: UserProfile,
         is_playing_gif: bool,
+    },
+    MouseStatus {
+        mouse_connected: bool,
+        mouse_status: Option<MouseStatus>,
+        profile: MouseProfile,
     },
     Pong,
 }

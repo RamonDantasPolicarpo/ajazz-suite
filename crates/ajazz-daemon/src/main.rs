@@ -264,6 +264,60 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     },
                 }
             }
+            Ok(IpcRequest::GetMouseStatus) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx.send(DeviceCommand::GetMouseStatus(reply_tx)).await;
+                match reply_rx.await {
+                    Ok((mouse_connected, mouse_status, profile)) => IpcResponse::MouseStatus {
+                        mouse_connected,
+                        mouse_status,
+                        profile,
+                    },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha ao consultar status do mouse".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::SetMouseConfig { config }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetMouseConfig(config, tx),
+                    "Configuração do mouse aplicada com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::SetMouseButton { slot, assignment }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetMouseButton(slot, assignment, tx),
+                    "Botão do mouse atualizado com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::ResetMouseButtons) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::ResetMouseButtons,
+                    "Botões do mouse restaurados para o padrão",
+                )
+                .await
+            }
+            Ok(IpcRequest::SyncMouseFromDevice) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::SyncMouseFromDevice,
+                    "Perfil sincronizado a partir do mouse",
+                )
+                .await
+            }
+            Ok(IpcRequest::StartMousePairing) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::StartMousePairing,
+                    "Pareamento NearLink 2.4G iniciado no receptor",
+                )
+                .await
+            }
             Err(e) => IpcResponse::Error {
                 error: format!("Payload JSON inválido: {e}"),
             },
