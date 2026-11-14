@@ -2,8 +2,8 @@ use crate::ipc_client::IpcRequest;
 use crate::{keymap_ui, GuiState, MainWindow};
 use ajazz_protocol::mouse::{
     clamp_dpi, LiftOffDistance, MouseButtonAction, MouseButtonSlot, MouseConfig,
-    MouseConnectionMode, MousePollingRate, MouseStatus, ScrollDirection, MOUSE_BUTTON_COUNT,
-    MOUSE_DEBOUNCE_MAX_MS, MOUSE_DEBOUNCE_MIN_MS, MOUSE_MAX_DPI_STAGES,
+    MouseConnectionMode, MousePollingRate, MouseProfile, MouseStatus, ScrollDirection,
+    MOUSE_BUTTON_COUNT, MOUSE_DEBOUNCE_MAX_MS, MOUSE_DEBOUNCE_MIN_MS, MOUSE_MAX_DPI_STAGES,
 };
 use ajazz_protocol::{MediaKey, HID_KEY_CATALOG};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -239,7 +239,52 @@ pub fn sync_selected_button_to_ui(
     update_left_click_warning(ui, buttons);
 }
 
-pub fn sync_buttons_list_to_ui(
+pub struct MouseStatusSyncPlan {
+    pub sync_config: bool,
+    pub sync_buttons: bool,
+    pub draft_cfg: MouseConfig,
+    pub dirty: bool,
+    pub buttons: [MouseButtonSlot; MOUSE_BUTTON_COUNT],
+}
+
+/// Mescla resposta `MouseStatus` periódica sem sobrescrever rascunhos em edição na GUI.
+pub fn merge_mouse_status(
+    st: &mut GuiState,
+    mouse_connected: bool,
+    mouse_status: Option<MouseStatus>,
+    profile: MouseProfile,
+) -> MouseStatusSyncPlan {
+    let prev_cfg = st.profile.mouse.config.clone();
+    let prev_buttons = st.profile.mouse.buttons.clone();
+    let was_dirty = st.draft_mouse_config != prev_cfg;
+    let first_or_forced = !st.mouse_synced_initial || st.mouse_force_resync;
+
+    st.profile.mouse = profile;
+    st.profile.mouse.config.normalize();
+    st.mouse_connected = mouse_connected;
+    st.mouse_status = mouse_status;
+
+    let cfg_changed_externally = st.profile.mouse.config != prev_cfg;
+    let buttons_changed = st.profile.mouse.buttons != prev_buttons;
+
+    let sync_config = first_or_forced || (!was_dirty && cfg_changed_externally);
+    if sync_config {
+        st.draft_mouse_config = st.profile.mouse.config.clone();
+    }
+    st.mouse_synced_initial = true;
+    st.mouse_force_resync = false;
+
+    let dirty = st.draft_mouse_config != st.profile.mouse.config;
+    MouseStatusSyncPlan {
+        sync_config,
+        sync_buttons: first_or_forced || buttons_changed,
+        draft_cfg: st.draft_mouse_config.clone(),
+        dirty,
+        buttons: st.profile.mouse.buttons.clone(),
+    }
+}
+
+pub fn sync_button_labels_only(
     ui: &MainWindow,
     buttons: &[MouseButtonSlot; MOUSE_BUTTON_COUNT],
 ) {
@@ -248,6 +293,14 @@ pub fn sync_buttons_list_to_ui(
         .map(|b| SharedString::from(slot_short_label(b)))
         .collect();
     ui.set_ms_button_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
+    update_left_click_warning(ui, buttons);
+}
+
+pub fn sync_buttons_list_to_ui(
+    ui: &MainWindow,
+    buttons: &[MouseButtonSlot; MOUSE_BUTTON_COUNT],
+) {
+    sync_button_labels_only(ui, buttons);
     let current = ui.get_ms_selected_slot().max(0) as usize;
     sync_selected_button_to_ui(ui, buttons, current);
 }
@@ -763,5 +816,25 @@ mod tests {
         assert_eq!(format_duration_secs(60), "1 min");
         assert_eq!(format_duration_secs(300), "5 min");
         assert_eq!(format_duration_secs(90), "1m 30s");
+    }
+
+    #[test]
+    fn periodic_poll_does_not_reset_button_or_config_editor_draft() {
+        let mut st = GuiState::new(ajazz_protocol::UserProfile::default());
+        let initial_profile = st.profile.mouse.clone();
+        let first = merge_mouse_status(&mut st, true, None, initial_profile.clone());
+        assert!(first.sync_config);
+        assert!(first.sync_buttons);
+
+        // Poll seguinte sem alterações externas não deve resetar nem o editor de botões nem os campos de texto de DPI
+        let second = merge_mouse_status(&mut st, true, None, initial_profile);
+        assert!(!second.sync_config);
+        assert!(!second.sync_buttons);
+
+        // Se outro cliente/reset alterar os botões no daemon, aí sim resincroniza o editor
+        let mut updated = st.profile.mouse.clone();
+        updated.buttons[3] = MouseButtonSlot::SniperDpi { level_mask: 0x01 };
+        let third = merge_mouse_status(&mut st, true, None, updated);
+        assert!(third.sync_buttons);
     }
 }
