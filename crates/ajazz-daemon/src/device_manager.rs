@@ -141,6 +141,16 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::PlayGif(path, fps, resp) => {
+                // BLOQUEADO: testes no hardware mostraram que cada escrita 0x0B causa
+                // piscada (o MCU reprocessa a iluminação). Sem evidência de que 0x0B
+                // opere somente em RAM, o streaming fica desativado (risco de flash).
+                const GIF_STREAMING_ENABLED: bool = false;
+                if !GIF_STREAMING_ENABLED {
+                    let _ = resp.send(Err(
+                        "GIF Player desativado: streaming por 0x0B pisca e não há prova de segurança da flash".into(),
+                    ));
+                    continue;
+                }
                 // Interrompe GIF anterior
                 if let Some(cancel) = gif_cancel_tx.take() {
                     let _ = cancel.send(true);
@@ -169,14 +179,20 @@ pub async fn run_device_actor(
                                 tokio::spawn(async move {
                                     let mut interval =
                                         tokio::time::interval(Duration::from_millis(interval_ms));
+                                    // Nunca acumula ticks atrasados (evita rajadas e fila de frames).
+                                    interval.set_missed_tick_behavior(
+                                        tokio::time::MissedTickBehavior::Skip,
+                                    );
                                     let mut frame_idx = 0;
 
                                     loop {
                                         tokio::select! {
                                             _ = interval.tick() => {
                                                 let frame = frames[frame_idx];
-                                                if tx_clone.send(DeviceCommand::RenderFrame(frame)).await.is_err() {
-                                                    break;
+                                                match tx_clone.try_send(DeviceCommand::RenderFrame(frame)) {
+                                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                                    // Fila cheia: descarta o frame para manter comandos responsivos.
+                                                    _ => {}
                                                 }
                                                 frame_idx = (frame_idx + 1) % total;
                                             }
@@ -204,14 +220,32 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::StopGif(resp) => {
-                let stopped = gif_cancel_tx.take().is_some();
+                let stopped = gif_cancel_tx.take().map(|c| { let _ = c.send(true); }).is_some();
                 if stopped {
                     info!("Reprodução de GIF interrompida.");
+                    // Sai do modo Custom restaurando a última cor estática (uma vez).
+                    let color = current_color.unwrap_or(RgbColor::new(255, 255, 255));
+                    if let Ok(dev) = ensure_connected(&mut device, &mut hid_api) {
+                        match dev.set_lighting(LightingMode::Static, 4, 4, color) {
+                            Ok(()) => {
+                                current_color = Some(color);
+                                current_mode = Some(LightingMode::Static);
+                            }
+                            Err(e) => {
+                                warn!("Erro ao restaurar modo estático: {e}");
+                                device = None;
+                            }
+                        }
+                    }
                 }
                 let _ = resp.send(Ok(()));
             }
 
             DeviceCommand::RenderFrame(frame) => {
+                // Descarta frames atrasados que ficaram na fila após o Stop.
+                if gif_cancel_tx.is_none() {
+                    continue;
+                }
                 if let Some(ref mut dev) = device {
                     if let Err(e) = dev.set_custom_matrix(&frame) {
                         warn!("Falha ao renderizar frame USB (desconexão?): {e}");

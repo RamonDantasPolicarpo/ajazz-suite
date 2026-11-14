@@ -4,28 +4,24 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Marco 1 (Protocolo), Marco 2 (Daemon IPC), Marco 3 (GUI Slint) e Marco 4 (Matriz por Tecla & GIF Player 25 FPS) CONCLUÍDOS
+## 1. Posição Atual: Marco 1 (Protocolo), Marco 2 (Daemon IPC), Marco 3 (GUI Slint) e Mapeamento de Matriz (Estático) CONCLUÍDOS
 
 - **Engenharia Reversa USB (AK820):**
-  - Protocolo de iluminação estática decodificado (`0x06`) e validado fisicamente via USBPcap e Rust nativo.
-  - Protocolo da matriz de LEDs customizada decodificado via engenharia reversa estática no Ghidra (`Opcode 0x0B` - SET_CUSTOM_RGB_MATRIX com fragmentação em 7 chunks e `Opcode 0x06` modo 20 / 0x14).
-  - Mapeamento espacial exato das 82 teclas físicas do AK820 normalizadas em $[0.0, 1.0]$ correlacionadas aos 128 índices de LED do microcontrolador EVision (`matrix.rs`).
-  - Projeção de imagem espacial zero-allocation e algoritmo de streaming a 25 FPS implementado e testado no hardware real.
-  - Regras de anti-brick e flash wear-out registradas em [AGENTS.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/AGENTS.md) (Zero gravação de flash com `Opcode 0x02` durante animações em tempo real; buffer volátil em RAM).
+  - Protocolo de iluminação estática (`0x06`) e modo Rain (`0x0F`) validados fisicamente.
+  - Mapeamento espacial das 82 teclas físicas do AK820 e `Opcode 0x0B` decodificados e documentados em [hid_protocol.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/protocol/hid_protocol.md).
+  - **Limitação Descoberta no Hardware**: Testes empíricos confirmaram que toda escrita contínua via `Opcode 0x0B` faz o MCU reprocessar a iluminação causando piscada visível. Por ausência de prova de que `0x0B` opere em RAM sem risco de flash wear-out, o streaming contínuo (GIF Player) foi desativado no Daemon e removido da GUI.
+  - Regras de anti-brick e flash wear-out registradas em [AGENTS.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/AGENTS.md).
 - **Daemon em Segundo Plano (`ajazz-daemon`):**
-  - Servidor IPC Named Pipe (`\\.\pipe\ajazz-daemon`) ativo e gerenciando reprodução assíncrona de GIFs e comandos em tempo real.
-  - Decodificador de GIFs (`gif_decoder.rs`) com pré-carregamento de frames e timer de 25 FPS desacoplado do IPC.
+  - Servidor IPC Named Pipe (`\\.\pipe\ajazz-daemon`) ativo para controle de cor estática, modos nativos e matriz pontual.
+  - `PlayGif` desativado (`GIF_STREAMING_ENABLED = false`) com retorno de erro explicativo.
   - Consumo em repouso: **< 10 MB de RAM** e **0% CPU em idle**.
 - **Interface Gráfica Nativa (`ajazz-gui`):**
   - Construída em **Slint**, compilada em binário nativo executável (`target/debug/ajazz-gui.exe`).
   - **Design Monocromático & Tipografia:** Paleta grafite escuro fosco (`#18181B`), linhas sutis de 1px (`#32323A`), tipografia JetBrains Mono.
   - **Layout do AK820 75%:** Grade física interativa com ~82 teclas e knob rotativo no topo direito.
-  - **Simulação de LEDs:** Bordas sólidas nítidas (1.5px) com a cor selecionada (sem degradês/neon), garantindo 0% de sobrecarga de GPU.
-  - **Controles de Iluminação:** Paleta de atalhos rápidos com cores puras + botão "Aplicar Cor".
-  - **Aba GIF PLAYER Integrada:** Seletor nativo de arquivos Windows (`rfd`), seletor de taxa de quadros (15, 20, 25 FPS), botões "REPRODUZIR" e "PARAR", badge de status em tempo real e proteção de flash ativa.
+  - **Controles de Iluminação:** Modos Estático e Chuva (Rain), paleta rápida de cores puras + botão "Aplicar Cor".
   - **Abas Integradas:** Sidebar vertical com abas para Teclado AK820, Mouse NearLink e Configurações/Daemon.
-  - **Conexão IPC Ponta a Ponta:** Toda interação na interface despacha a mensagem assíncrona ao Daemon que acende os LEDs físicos do teclado.
-- **Bloqueio/Aguardando:** Nenhum bloqueio. Pronto para teste do usuário na tela.
+- **Bloqueio/Aguardando:** Nenhum bloqueio. Pronto para escolher o próximo marco (cores por tecla estáticas, Mouse NearLink ou Switch Chattering).
 
 ---
 
@@ -53,12 +49,13 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `a282dd7`: `feat: implement native Slint GUI with 75% AK820 layout, monochromatic graphite theme and IPC client`
 - `be2fad5`: `fix: correct AK820 75% physical keycap alignment, arrow cluster and navigation column`
 - `5ace228`: `fix: embed JetBrains Mono font, fix badge padding and align keyboard and sidebar geometry`
-- `[próximo]`: `feat: implement custom per-key rgb matrix, 25 fps gif player, and native gui controls`
+- `2c8663c`: `feat: implement custom per-key rgb matrix, 25 fps gif player, and native gui controls`
+- `[próximo]`: `chore: disable gif streaming due to hardware flicker and remove gif tab from gui`
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. Usuário abrir a GUI (`ajazz-gui.exe`) e testar a reprodução do GIF animado no teclado AK820 físico na aba "GIF PLAYER".
+1. Cores por tecla estáticas (pintura individual por tecla usando transação `0x01 -> 0x0B -> 0x02`, após validação no hardware e Grill Me na GUI).
 2. Engenharia reversa dos pacotes de telemetria de bateria e DPI do Mouse NearLink (`0x7768:0x642E`).
 3. Detecção de Switch Chattering em segundo plano no Daemon e alerta na GUI.
