@@ -4,7 +4,14 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Audio Sync (`0x1D -> 0xFE`) e GIF Player Volátil (`0x12`) VALIDADOS EM HARDWARE
+## 1. Posição Atual: Mouse AJ179 NL P Mapeado via RE (`docs/protocol/mouse_protocol.md`) + Teclado AK820 Validado
+
+- **Mouse AJAZZ AJ179 NL P (`NearLink BS25/BS2X`, `AJAZZ Driver（W1）.exe`):**
+  - Política anti-brick e bloqueio de DFU/Bootloader registrada em [ADR-0003](docs/adr/0003-mouse-anti-brick-and-dfu-lockout.md) (`UsagePage 0xFFB1`, `BurnTool.exe`, `libburn.dll` e `06 0F ... FF` estritamente bloqueados).
+  - Protocolo HID proprietário completo mapeado em [mouse_protocol.md](docs/protocol/mouse_protocol.md) (`VID 0x7768`, `PID 0x642E` 2.4G / `0x6D2E` USB, `UsagePage 0xFFB2 / Usage 0x01`, reports de 64 bytes):
+    - Leituras: `06 05` (bateria, carregamento, online, estágios DPI `50..26000`, polling rate `125..1000Hz`, LOD `1/2mm`, `sensor_flag`, `highspeed_mode`, debounce `1..50ms`, sleep, FW), `06 07` (FW receptor), `06 10` / `06 11`.
+    - Escritas `06 13 <len> 00 00 <param_id>`: `0x01` DPI, `0x02` Polling Rate, `0x05` Scroll, `0x06` LOD, `0x07` Sensor (Ripple/Linear/Motion Sync), `0x08` High-Speed, `0x09` Pareamento, `0x0A` Debounce, `0x0B` Sleep.
+    - Remapeamento `06 12` (slots 4B), Upload de Macros `06 31` (fatias `<=59B`), Apply `06 0F 01 00 00 08`, notificações assíncronas `rx[1]==0xFA`.
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -27,7 +34,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 | Dispositivo | Fabricante | VID | PID | Endpoint de Controle Proprietário |
 | :--- | :--- | :--- | :--- | :--- |
 | **Teclado AK820** | `Evision` | `0x320F` | `0x505B` | `UsagePage=0xFF1C, Usage=0x0092` |
-| **Mouse NearLink** | `AJAZZ` | `0x7768` | `0x642E` | `UsagePage=0xFFB1, 0xFFB2, 0xFFB3` |
+| **Mouse NearLink (AJ179 NL P)** | `AJAZZ` | `0x7768` | `0x642E` (2.4G) / `0x6D2E` (USB) | `UsagePage=0xFFB2, Usage=0x01` (`0xFFB1` DFU bloqueado) |
 
 ---
 
@@ -57,8 +64,9 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ## 4. Próximos Passos Imediatos
 
-1. **Refinamentos do GIF Player (pós-consolidação)**: adicionar enquadramento/recorte (*crop* / *pan & zoom*) da região do GIF projetada na matriz e controle fino de velocidade/FPS mais baixos (ex.: respeitar delay nativo dos frames ou opções de 1–10 FPS / multiplicador).
-2. **Simulação Visual na GUI**: renderizar animação em tempo real dos efeitos RGB (incluindo Audio/GIF) no `KeyboardView` da GUI.
-3. **Expansão de Hardware e Diagnóstico**:
-   - Engenharia reversa do **Mouse NearLink** (`0x7768:0x642E`, endpoints `0xFFB1..0xFFB3`).
-   - Detector de **Switch Chattering** + filtros de diagnóstico.
+1. **Mouse AJ179 NL P (`ajazz-protocol` -> `ajazz-daemon` -> Grill Me -> `ajazz-gui`)**:
+   - Implementar codecs puros em `ajazz-protocol` e validar leitura passiva (`06 05` / `06 07`) no hardware físico antes de escrever parâmetros.
+   - Integrar detecção, hot-unplug, eventos `0xFA` e IPC no `ajazz-daemon`.
+   - Realizar rodada obrigatória de **Grill Me** antes de editar `ajazz-gui`.
+2. **Refinamentos do GIF Player (pós-consolidação)**: adicionar enquadramento/recorte (*crop* / *pan & zoom*) da região do GIF projetada na matriz e controle fino de velocidade/FPS mais baixos (1–10 FPS / multiplicador).
+3. **Simulação Visual + Detector de Switch Chattering**: animação ao vivo no `KeyboardView` e diagnóstico de chattering.
