@@ -25,6 +25,7 @@ fn bug1_static_red_full_64_bytes_must_match_official_pcap_frame_117() {
         color: RgbColor::new(255, 0, 0),
         custom_group: 1,
         zzcc_mode: 0,
+        ..LightingConfig::default()
     };
 
     let actual = build_lighting_packet_config(&cfg);

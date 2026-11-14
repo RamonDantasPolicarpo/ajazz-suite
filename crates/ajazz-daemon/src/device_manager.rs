@@ -1,3 +1,4 @@
+use crate::audio_capture::AudioSyncEngine;
 use crate::gif_decoder::decode_gif_to_matrix_frames;
 use crate::profile_store::{load_profile, save_profile};
 use crate::screen_capture::ScreenCapturer;
@@ -42,17 +43,22 @@ pub enum DeviceCommand {
     StopGif(oneshot::Sender<Result<(), String>>),
     RenderFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     CaptureFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
+    AudioFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     GetStatus(oneshot::Sender<DeviceStatus>),
 }
 
 fn cancel_active_streams(
     gif_cancel_tx: &mut Option<watch::Sender<bool>>,
     capture_stop: &mut Option<Arc<AtomicBool>>,
+    audio_stop: &mut Option<Arc<AtomicBool>>,
 ) {
     if let Some(cancel) = gif_cancel_tx.take() {
         let _ = cancel.send(true);
     }
     if let Some(stop) = capture_stop.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+    if let Some(stop) = audio_stop.take() {
         stop.store(true, Ordering::Relaxed);
     }
 }
@@ -75,6 +81,77 @@ fn start_capture_streamer(cmd_tx: mpsc::Sender<DeviceCommand>) -> Arc<AtomicBool
     stop
 }
 
+fn start_audio_streamer(
+    cmd_tx: mpsc::Sender<DeviceCommand>,
+    cfg: LightingConfig,
+) -> Arc<AtomicBool> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = Arc::clone(&stop);
+    std::thread::spawn(move || {
+        let mut engine = AudioSyncEngine::new();
+        let mut last_frame: Option<[RgbColor; TOTAL_PHYSICAL_LEDS]> = None;
+        while !stop_flag.load(Ordering::Relaxed) {
+            let frame = engine.poll_frame(&cfg);
+            let changed = last_frame != Some(frame);
+            if changed {
+                last_frame = Some(frame);
+                if let Err(mpsc::error::TrySendError::Closed(_)) =
+                    cmd_tx.try_send(DeviceCommand::AudioFrame(frame))
+                {
+                    break;
+                }
+            }
+            // ~30 FPS sem alocar memória dinâmica nem inundar HID em silêncio absoluto.
+            std::thread::sleep(Duration::from_millis(33));
+        }
+    });
+    stop
+}
+
+fn sync_live_streamers(
+    device_connected: bool,
+    profile: &UserProfile,
+    cmd_tx: &mpsc::Sender<DeviceCommand>,
+    capture_stop: &mut Option<Arc<AtomicBool>>,
+    audio_stop: &mut Option<Arc<AtomicBool>>,
+    gif_playing: bool,
+) {
+    if !device_connected || gif_playing {
+        return;
+    }
+    match profile.lighting.mode {
+        LightingMode::Capture if capture_stop.is_none() => {
+            *capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
+        }
+        LightingMode::Audio if audio_stop.is_none() => {
+            *audio_stop = Some(start_audio_streamer(cmd_tx.clone(), profile.lighting));
+        }
+        _ => {}
+    }
+}
+
+fn forward_live_frame(
+    device: &mut Option<Ak820Device>,
+    profile: &UserProfile,
+    expected_mode: LightingMode,
+    stop_handle: &mut Option<Arc<AtomicBool>>,
+    frame: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+    label: &str,
+) {
+    if stop_handle.is_none() || profile.lighting.mode != expected_mode {
+        return;
+    }
+    if let Some(ref mut dev) = device {
+        if let Err(e) = dev.send_live_matrix(frame, profile.lighting.brightness) {
+            warn!("Falha ao enviar quadro {label} (0x12, desconexão?): {e}");
+            *device = None;
+            if let Some(stop) = stop_handle.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 /// Actor dedicado para controle exclusivo do hardware USB HID e estado do User Profile.
 pub async fn run_device_actor(
     cmd_tx: mpsc::Sender<DeviceCommand>,
@@ -86,7 +163,9 @@ pub async fn run_device_actor(
     let mut device: Option<Ak820Device> = None;
     let mut profile = load_profile();
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
+    let mut pre_gif_lighting: Option<LightingConfig> = None;
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
+    let mut audio_stop: Option<Arc<AtomicBool>> = None;
 
     // Tenta conexão inicial
     if let Some(ref api) = hid_api {
@@ -96,14 +175,20 @@ pub async fn run_device_actor(
         }
     }
 
-    if device.is_some() && profile.lighting.mode == LightingMode::Capture {
-        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
-    }
+    sync_live_streamers(
+        device.is_some(),
+        &profile,
+        &cmd_tx,
+        &mut capture_stop,
+        &mut audio_stop,
+        false,
+    );
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
             DeviceCommand::SetStaticColor(color, resp) => {
-                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                pre_gif_lighting = None;
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Static;
@@ -115,7 +200,8 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::SetLighting(mut cfg, resp) => {
-                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                pre_gif_lighting = None;
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
                 cfg.normalize();
 
                 let result = if cfg.mode == LightingMode::Custom {
@@ -129,16 +215,22 @@ pub async fn run_device_actor(
                     )
                 } else {
                     let res = apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg);
-                    if res.is_ok() && cfg.mode == LightingMode::Capture {
-                        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
-                    }
+                    sync_live_streamers(
+                        res.is_ok() && device.is_some(),
+                        &profile,
+                        &cmd_tx,
+                        &mut capture_stop,
+                        &mut audio_stop,
+                        false,
+                    );
                     res
                 };
                 let _ = resp.send(result);
             }
 
             DeviceCommand::SetCustomBank(bank, colors, resp) => {
-                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                pre_gif_lighting = None;
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Custom;
@@ -157,7 +249,8 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::SelectCustomBank(bank, resp) => {
-                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                pre_gif_lighting = None;
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Custom;
@@ -272,14 +365,24 @@ pub async fn run_device_actor(
                 let result = match ensure_connected(&mut device, &mut hid_api) {
                     Ok(dev) => match dev.read_config() {
                         Ok((cfg, sys)) => {
-                            cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                            pre_gif_lighting = None;
+                            cancel_active_streams(
+                                &mut gif_cancel_tx,
+                                &mut capture_stop,
+                                &mut audio_stop,
+                            );
                             profile.lighting = cfg;
                             profile.system = sys;
                             profile.normalize();
                             save_profile(&profile);
-                            if profile.lighting.mode == LightingMode::Capture {
-                                capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
-                            }
+                            sync_live_streamers(
+                                true,
+                                &profile,
+                                &cmd_tx,
+                                &mut capture_stop,
+                                &mut audio_stop,
+                                false,
+                            );
                             info!("Configuração sincronizada a partir do teclado via 0x05.");
                             Ok(())
                         }
@@ -295,142 +398,177 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::PlayGif(path, fps, resp) => {
-                // BLOQUEADO: testes no hardware mostraram que cada escrita 0x0B causa
-                // piscada (o MCU reprocessa a iluminação). Sem evidência de que 0x0B
-                // opere somente em RAM, o streaming fica desativado (risco de flash).
-                const GIF_STREAMING_ENABLED: bool = false;
-                if !GIF_STREAMING_ENABLED {
-                    let _ = resp.send(Err(
-                        "GIF Player desativado: streaming por 0x0B pisca e não há prova de segurança da flash".into(),
-                    ));
-                    continue;
-                }
-                // Interrompe GIF anterior
-                if let Some(cancel) = gif_cancel_tx.take() {
-                    let _ = cancel.send(true);
-                }
+                let saved_lighting = pre_gif_lighting.unwrap_or(profile.lighting);
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
 
-                let dev_res = ensure_connected(&mut device, &mut hid_api);
-                match dev_res {
-                    Ok(dev) => {
-                        // Decodifica antecipadamente os quadros projetados
-                        match decode_gif_to_matrix_frames(&path) {
-                            Ok(frames) => {
-                                let total = frames.len();
-                                if let Err(e) = dev.enable_custom_lighting_mode() {
-                                    let _ = resp.send(Err(format!("Falha ao habilitar modo customizado: {e}")));
-                                    continue;
-                                }
+                let result = match decode_gif_to_matrix_frames(&path) {
+                    Ok(frames) if frames.is_empty() => {
+                        Err("O arquivo GIF não contém nenhum frame válido.".to_string())
+                    }
+                    Ok(frames) => match ensure_connected(&mut device, &mut hid_api) {
+                        Ok(dev) => {
+                            // Ativa o modo escravo volátil (`0xFE`) UMA ÚNICA VEZ; todos os frames usam RAM (`0x12`).
+                            let mut live_cfg = saved_lighting;
+                            live_cfg.mode = LightingMode::Capture;
+                            live_cfg.normalize();
 
-                                profile.lighting.mode = LightingMode::Custom;
-                                let (cancel_tx, mut cancel_rx) = watch::channel(false);
-                                gif_cancel_tx = Some(cancel_tx);
+                            match dev.apply_config(&live_cfg, &profile.system) {
+                                Ok(()) => {
+                                    pre_gif_lighting = Some(saved_lighting);
+                                    let total = frames.len();
+                                    let (cancel_tx, mut cancel_rx) = watch::channel(false);
+                                    gif_cancel_tx = Some(cancel_tx);
 
-                                let fps = fps.clamp(1, 60);
-                                let interval_ms = (1000 / fps as u64).max(16);
-                                let tx_clone = cmd_tx.clone();
+                                    let eff_fps = fps.clamp(1, 60);
+                                    let interval_ms = (1000 / eff_fps as u64).max(16);
+                                    let tx_clone = cmd_tx.clone();
 
-                                tokio::spawn(async move {
-                                    let mut interval =
-                                        tokio::time::interval(Duration::from_millis(interval_ms));
-                                    // Nunca acumula ticks atrasados (evita rajadas e fila de frames).
-                                    interval.set_missed_tick_behavior(
-                                        tokio::time::MissedTickBehavior::Skip,
-                                    );
-                                    let mut frame_idx = 0;
+                                    tokio::spawn(async move {
+                                        let mut interval = tokio::time::interval(
+                                            Duration::from_millis(interval_ms),
+                                        );
+                                        interval.set_missed_tick_behavior(
+                                            tokio::time::MissedTickBehavior::Skip,
+                                        );
+                                        let mut frame_idx = 0usize;
 
-                                    loop {
-                                        tokio::select! {
-                                            _ = interval.tick() => {
-                                                let frame = frames[frame_idx];
-                                                match tx_clone.try_send(DeviceCommand::RenderFrame(frame)) {
-                                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
-                                                    // Fila cheia: descarta o frame para manter comandos responsivos.
-                                                    _ => {}
+                                        loop {
+                                            tokio::select! {
+                                                _ = interval.tick() => {
+                                                    let frame = frames[frame_idx];
+                                                    if let Err(mpsc::error::TrySendError::Closed(_)) =
+                                                        tx_clone.try_send(DeviceCommand::RenderFrame(frame))
+                                                    {
+                                                        break;
+                                                    }
+                                                    frame_idx = (frame_idx + 1) % total;
                                                 }
-                                                frame_idx = (frame_idx + 1) % total;
-                                            }
-                                            _ = cancel_rx.changed() => {
-                                                if *cancel_rx.borrow() {
-                                                    break;
+                                                _ = cancel_rx.changed() => {
+                                                    if *cancel_rx.borrow() {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                });
+                                    });
 
-                                info!("Reprodução de GIF iniciada: '{}' ({} frames @ {} FPS)", path, total, fps);
-                                let _ = resp.send(Ok(()));
-                            }
-                            Err(e) => {
-                                let _ = resp.send(Err(e));
+                                    info!(
+                                        "Reprodução de GIF iniciada via 0x12: '{}' ({} frames @ {} FPS)",
+                                        path, total, eff_fps
+                                    );
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    warn!("Falha ao ativar modo live 0xFE para GIF: {e}");
+                                    device = None;
+                                    Err(format!("Falha ao preparar teclado para GIF: {e}"))
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        let _ = resp.send(Err(e));
-                    }
-                }
+                        Err(e) => Err(e),
+                    },
+                    Err(e) => Err(e),
+                };
+                let _ = resp.send(result);
             }
 
             DeviceCommand::StopGif(resp) => {
-                let stopped = gif_cancel_tx.take().map(|c| { let _ = c.send(true); }).is_some();
+                let stopped = gif_cancel_tx
+                    .take()
+                    .map(|c| {
+                        let _ = c.send(true);
+                    })
+                    .is_some();
+                let restore_cfg = pre_gif_lighting.take();
                 if stopped {
                     info!("Reprodução de GIF interrompida.");
-                    let mut cfg = profile.lighting;
-                    cfg.mode = LightingMode::Static;
-                    let _ = apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg);
+                    let mut cfg = restore_cfg.unwrap_or(profile.lighting);
+                    if cfg.mode == LightingMode::Custom {
+                        let _ = apply_custom_command(
+                            &mut device,
+                            &mut hid_api,
+                            &mut profile,
+                            cfg,
+                            cfg.custom_group,
+                            None,
+                        );
+                    } else {
+                        cfg.normalize();
+                        if apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg)
+                            .is_ok()
+                        {
+                            sync_live_streamers(
+                                device.is_some(),
+                                &profile,
+                                &cmd_tx,
+                                &mut capture_stop,
+                                &mut audio_stop,
+                                false,
+                            );
+                        }
+                    }
                 }
                 let _ = resp.send(Ok(()));
             }
 
             DeviceCommand::RenderFrame(frame) => {
-                // Descarta frames atrasados que ficaram na fila após o Stop.
+                // Descarta frames atrasados após Stop e envia somente via RAM volátil (Opcode 0x12).
                 if gif_cancel_tx.is_none() {
                     continue;
                 }
                 if let Some(ref mut dev) = device {
-                    if let Err(e) = dev.set_custom_matrix(&frame) {
-                        warn!("Falha ao renderizar frame USB (desconexão?): {e}");
-                        device = None;
-                    }
-                }
-            }
-
-            DeviceCommand::CaptureFrame(frame) => {
-                if capture_stop.is_none() || profile.lighting.mode != LightingMode::Capture {
-                    continue;
-                }
-                if let Some(ref mut dev) = device {
                     if let Err(e) = dev.send_live_matrix(&frame, profile.lighting.brightness) {
-                        warn!("Falha ao enviar quadro Capture (0x12, desconexão?): {e}");
+                        warn!("Falha ao enviar quadro GIF (0x12, desconexão?): {e}");
                         device = None;
-                        if let Some(stop) = capture_stop.take() {
-                            stop.store(true, Ordering::Relaxed);
+                        if let Some(cancel) = gif_cancel_tx.take() {
+                            let _ = cancel.send(true);
                         }
                     }
                 }
             }
 
+            DeviceCommand::CaptureFrame(frame) => {
+                forward_live_frame(
+                    &mut device,
+                    &profile,
+                    LightingMode::Capture,
+                    &mut capture_stop,
+                    &frame,
+                    "Capture",
+                );
+            }
+
+            DeviceCommand::AudioFrame(frame) => {
+                forward_live_frame(
+                    &mut device,
+                    &profile,
+                    LightingMode::Audio,
+                    &mut audio_stop,
+                    &frame,
+                    "Audio Sync",
+                );
+            }
+
             DeviceCommand::GetStatus(resp) => {
                 let is_connected =
                     device.is_some() || try_connect_silent(&mut device, &mut hid_api);
-                if is_connected
-                    && profile.lighting.mode == LightingMode::Capture
-                    && capture_stop.is_none()
-                {
-                    let cfg = profile.lighting;
-                    let _ = apply_lighting_command(
-                        &mut device,
-                        &mut hid_api,
-                        &mut profile,
-                        cfg,
-                    );
-                    if device.is_some() {
-                        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
-                    }
-                }
                 let is_playing = gif_cancel_tx.is_some();
+                let needs_stream_init = is_connected
+                    && !is_playing
+                    && ((profile.lighting.mode == LightingMode::Capture && capture_stop.is_none())
+                        || (profile.lighting.mode == LightingMode::Audio && audio_stop.is_none()));
+                if needs_stream_init {
+                    let cfg = profile.lighting;
+                    let _ = apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg);
+                    sync_live_streamers(
+                        device.is_some(),
+                        &profile,
+                        &cmd_tx,
+                        &mut capture_stop,
+                        &mut audio_stop,
+                        is_playing,
+                    );
+                }
                 let status = DeviceStatus {
                     connected: is_connected,
                     device_name: PROFILE_AK820.name.to_string(),
@@ -604,4 +742,43 @@ fn ensure_connected<'a>(
     device
         .as_mut()
         .ok_or_else(|| "Dispositivo não disponível".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_active_streams_stops_gif_capture_and_audio() {
+        let (tx, rx) = watch::channel(false);
+        let cap = Arc::new(AtomicBool::new(false));
+        let aud = Arc::new(AtomicBool::new(false));
+        let mut gif_tx = Some(tx);
+        let mut cap_opt = Some(Arc::clone(&cap));
+        let mut aud_opt = Some(Arc::clone(&aud));
+
+        cancel_active_streams(&mut gif_tx, &mut cap_opt, &mut aud_opt);
+
+        assert!(gif_tx.is_none());
+        assert!(cap_opt.is_none());
+        assert!(aud_opt.is_none());
+        assert!(*rx.borrow());
+        assert!(cap.load(Ordering::Relaxed));
+        assert!(aud.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn sync_live_streamers_is_idle_when_disconnected_or_gif_playing() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut profile = UserProfile::default();
+        profile.lighting.mode = LightingMode::Audio;
+        let mut cap = None;
+        let mut aud = None;
+
+        sync_live_streamers(false, &profile, &tx, &mut cap, &mut aud, false);
+        assert!(aud.is_none());
+
+        sync_live_streamers(true, &profile, &tx, &mut cap, &mut aud, true);
+        assert!(aud.is_none());
+    }
 }

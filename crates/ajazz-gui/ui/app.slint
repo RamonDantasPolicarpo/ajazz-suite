@@ -89,6 +89,11 @@ export component MainWindow inherits Window {
     in-out property <bool> sys-wasd-swap: false;
     in-out property <int> sys-polling-rate-idx: 0;
 
+    in-out property <[string]> mode-labels: [
+        "Normal", "Corrugated", "Cloud", "Serpentine", "Spectrum", "Breath", "Reaction",
+        "Ripples", "Traverse", "Stars", "Flowers", "Roll", "Wave", "Cartoon",
+        "Rain", "Scan", "Surmount", "Speed", "Capture", "Audio", "Custom"
+    ];
     in-out property <int> active-mode-index: 0;
     in-out property <int> brightness: 4;
     in-out property <int> speed: 2;
@@ -97,6 +102,13 @@ export component MainWindow inherits Window {
     in-out property <int> zzcc-mode: 0;
     in-out property <int> custom-bank: 0;
     in-out property <bool> custom-eraser: false;
+    in-out property <int> audio-style: 0;
+    in-out property <bool> audio-bg-enabled: false;
+    in-out property <color> audio-bg-color: #000000;
+    in-out property <string> gif-file-name: "Nenhum .gif selecionado";
+    in-out property <bool> gif-has-file: false;
+    in-out property <int> gif-fps: 25;
+    in-out property <bool> is-playing-gif: false;
 
     in-out property <color> current-color: #FF0000;
     in-out property <string> hex-text: "#FF0000";
@@ -114,6 +126,7 @@ export component MainWindow inherits Window {
     in-out property <string> dir-reverse-label: "R → L";
     in-out property <bool> supports-zzcc: false;
     in-out property <bool> is-custom-mode: false;
+    in-out property <bool> is-audio-mode: false;
 
     // Popover HSV sob demanda
     in-out property <bool> hsv-popover-open: false;
@@ -134,6 +147,12 @@ export component MainWindow inherits Window {
     callback custom-key-clicked(int, bool);
     callback custom-fill-all();
     callback custom-clear-all();
+    callback audio-style-selected(int);
+    callback audio-bg-toggled(bool);
+    callback audio-bg-use-current();
+    callback gif-browse-clicked();
+    callback gif-fps-selected(int);
+    callback gif-play-toggle();
     callback swatch-clicked(color);
     callback hex-submitted(string);
     callback rgb-submitted(string, string, string);
@@ -305,6 +324,7 @@ export component MainWindow inherits Window {
 
                 // Sub-aba 0: Painel de Controles de Iluminação
                 if (root.kb-subtab == 0) : LightingControls {
+                    mode-labels: root.mode-labels;
                     active-mode-index <=> root.active-mode-index;
                     brightness <=> root.brightness;
                     speed <=> root.speed;
@@ -313,6 +333,13 @@ export component MainWindow inherits Window {
                     zzcc-mode <=> root.zzcc-mode;
                     custom-bank <=> root.custom-bank;
                     custom-eraser <=> root.custom-eraser;
+                    audio-style <=> root.audio-style;
+                    audio-bg-enabled <=> root.audio-bg-enabled;
+                    audio-bg-color <=> root.audio-bg-color;
+                    gif-file-name <=> root.gif-file-name;
+                    gif-has-file <=> root.gif-has-file;
+                    gif-fps <=> root.gif-fps;
+                    is-playing-gif <=> root.is-playing-gif;
                     selected-color <=> root.current-color;
                     hex-text <=> root.hex-text;
                     red-text <=> root.red-text;
@@ -326,6 +353,7 @@ export component MainWindow inherits Window {
                     dir-reverse-label: root.dir-reverse-label;
                     supports-zzcc: root.supports-zzcc;
                     is-custom-mode: root.is-custom-mode;
+                    is-audio-mode: root.is-audio-mode;
 
                     mode-selected(idx) => { root.mode-selected(idx); }
                     brightness-changed(val) => { root.brightness-changed(val); }
@@ -336,6 +364,12 @@ export component MainWindow inherits Window {
                     custom-bank-selected(b) => { root.custom-bank-selected(b); }
                     custom-fill-all => { root.custom-fill-all(); }
                     custom-clear-all => { root.custom-clear-all(); }
+                    audio-style-selected(s) => { root.audio-style-selected(s); }
+                    audio-bg-toggled(en) => { root.audio-bg-toggled(en); }
+                    audio-bg-use-current => { root.audio-bg-use-current(); }
+                    gif-browse-clicked => { root.gif-browse-clicked(); }
+                    gif-fps-selected(fps) => { root.gif-fps-selected(fps); }
+                    gif-play-toggle => { root.gif-play-toggle(); }
                     swatch-clicked(c) => { root.swatch-clicked(c); }
                     hex-submitted(txt) => { root.hex-submitted(txt); }
                     rgb-submitted(r, g, b) => { root.rgb-submitted(r, g, b); }

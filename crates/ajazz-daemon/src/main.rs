@@ -1,3 +1,4 @@
+mod audio_capture;
 mod device_manager;
 mod gif_decoder;
 mod ipc;
@@ -220,11 +221,14 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                 .await
             }
             Ok(IpcRequest::PlayGif { path, fps }) => {
+                let eff_fps = fps.unwrap_or(25).clamp(1, 60);
                 let (reply_tx, reply_rx) = oneshot::channel();
-                let _ = cmd_tx.send(DeviceCommand::PlayGif(path, fps.unwrap_or(25), reply_tx)).await;
+                let _ = cmd_tx
+                    .send(DeviceCommand::PlayGif(path, eff_fps, reply_tx))
+                    .await;
                 match reply_rx.await {
                     Ok(Ok(())) => IpcResponse::Ok {
-                        message: "Reprodução de GIF iniciada a 25 FPS".into(),
+                        message: format!("Reprodução de GIF iniciada a {eff_fps} FPS (RAM volátil 0x12)"),
                     },
                     Ok(Err(err)) => IpcResponse::Error { error: err },
                     Err(_) => IpcResponse::Error {
