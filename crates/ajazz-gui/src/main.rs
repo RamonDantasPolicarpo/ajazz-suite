@@ -413,31 +413,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         false
                     }
                     Ok(IpcResponse::MouseStatus { mouse_connected, mouse_status, profile }) => {
-                        let (draft_cfg, dirty, buttons) = {
+                        let plan = {
                             let mut st = state_ref.lock().unwrap();
-                            let was_dirty = st.draft_mouse_config != st.profile.mouse.config;
-                            st.profile.mouse = profile;
-                            st.profile.mouse.config.normalize();
-                            st.mouse_connected = mouse_connected;
-                            st.mouse_status = mouse_status.clone();
-                            if !st.mouse_synced_initial || st.mouse_force_resync || !was_dirty {
-                                st.draft_mouse_config = st.profile.mouse.config.clone();
-                                st.mouse_synced_initial = true;
-                                st.mouse_force_resync = false;
-                            }
-                            let dirty = st.draft_mouse_config != st.profile.mouse.config;
-                            (
-                                st.draft_mouse_config.clone(),
-                                dirty,
-                                st.profile.mouse.buttons.clone(),
+                            mouse_ui::merge_mouse_status(
+                                &mut st,
+                                mouse_connected,
+                                mouse_status.clone(),
+                                profile,
                             )
                         };
                         let ui_clone = ui_w.clone();
                         let _ = ui_clone.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
                             mouse_ui::sync_telemetry_to_ui(&ui, mouse_connected, mouse_status.as_ref());
-                            mouse_ui::sync_buttons_list_to_ui(&ui, &buttons);
-                            mouse_ui::sync_config_to_ui(&ui, &draft_cfg, dirty);
+                            if plan.sync_buttons {
+                                mouse_ui::sync_buttons_list_to_ui(&ui, &plan.buttons);
+                            } else {
+                                mouse_ui::sync_button_labels_only(&ui, &plan.buttons);
+                            }
+                            if plan.sync_config {
+                                mouse_ui::sync_config_to_ui(&ui, &plan.draft_cfg, plan.dirty);
+                            }
                         });
                         false
                     }
@@ -504,7 +500,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let was_sync = matches!(req, IpcRequest::SyncFromDevice);
                         let was_mouse_sync = matches!(
                             req,
-                            IpcRequest::SyncMouseFromDevice | IpcRequest::SetMouseConfig { .. }
+                            IpcRequest::SyncMouseFromDevice
+                                | IpcRequest::SetMouseConfig { .. }
+                                | IpcRequest::ResetMouseButtons
                         );
                         let is_gif_cmd = matches!(req, IpcRequest::PlayGif { .. } | IpcRequest::StopGif);
                         let resp = send_request(req).await;
