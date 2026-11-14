@@ -8,6 +8,8 @@ export component Keycap inherits Rectangle {
     in property <bool> has-led: false;
     in property <bool> is-knob: false;
     in property <bool> has-chattering: false;
+    in property <bool> is-selected: false;
+    in property <bool> is-remapped: false;
 
     callback clicked();
 
@@ -17,8 +19,18 @@ export component Keycap inherits Rectangle {
     background: touch.has-hover ? Theme.surface-hover : Theme.surface;
 
     // Borda sólida nítida sem degradês/neon
-    border-color: root.has-chattering ? Theme.status-warning : (root.has-led ? root.led-color : Theme.border);
-    border-width: (root.has-led || root.has-chattering) ? 1.5px : 1px;
+    border-color: root.is-selected ? Theme.text-primary : (root.has-chattering ? Theme.status-warning : (root.has-led ? root.led-color : Theme.border));
+    border-width: root.is-selected ? 2px : ((root.has-led || root.has-chattering) ? 1.5px : 1px);
+
+    // Indicador discreto para teclas com remapeamento ativo
+    if (root.is-remapped && !root.is-knob) : Rectangle {
+        x: parent.width - 7px;
+        y: 3px;
+        width: 4px;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.status-online;
+    }
 
     // Knob de volume giratório do AK820
     if (root.is-knob) : Rectangle {

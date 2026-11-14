@@ -1,8 +1,14 @@
+use std::collections::BTreeMap;
 use std::fmt;
+use std::time::Duration;
 use thiserror::Error;
 
 pub use hidapi;
 
+pub mod keymap;
+pub use keymap::*;
+pub mod macros;
+pub use macros::*;
 pub mod matrix;
 pub use matrix::*;
 
@@ -30,10 +36,16 @@ pub const REPORT_ID_COMMAND: u8 = 0x04;
 /// Opcodes do protocolo USB HID do AK820
 pub const OPCODE_BEGIN_TRANSACTION: u8 = 0x01;
 pub const OPCODE_COMMIT_TRANSACTION: u8 = 0x02;
+pub const OPCODE_GET_DEVICE_INFO: u8 = 0x03;
+pub const OPCODE_GET_CONFIG: u8 = 0x05;
 pub const OPCODE_SET_LIGHTING: u8 = 0x06;
-pub const OPCODE_KEY_MATRIX_MAPPING: u8 = 0x07;
+pub const OPCODE_GET_KEY_MATRIX: u8 = 0x07;
+pub const OPCODE_KEY_MATRIX_MAPPING: u8 = OPCODE_GET_KEY_MATRIX;
+pub const OPCODE_SET_KEY_MATRIX: u8 = 0x09;
 pub const OPCODE_SET_CUSTOM_RGB_MATRIX: u8 = 0x0B;
 pub const OPCODE_SET_LIVE_MATRIX: u8 = 0x12;
+pub const OPCODE_SET_MACROS: u8 = 0x15;
+pub const OPCODE_SET_SHOOT_MACROS: u8 = 0x17;
 pub const OPCODE_HEARTBEAT_POLL: u8 = 0x1A;
 pub const OPCODE_GET_LED_MAPPING: u8 = 0x1B;
 
@@ -56,6 +68,104 @@ pub enum ProtocolError {
 
     #[error("Firmware rejeitou comando 0x{opcode:02X} com status 0x{status:02X}")]
     CommandRejected { opcode: u8, status: u8 },
+
+    #[error("Timeout aguardando resposta HID para opcode 0x{opcode:02X}")]
+    ResponseTimeout { opcode: u8 },
+
+    #[error("Dados inválidos no protocolo: {0}")]
+    InvalidProtocolData(String),
+}
+
+/// Taxa de Polling USB (`PollingRate` em `Opcode 0x05`/`0x06`, byte 30).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum PollingRate {
+    #[default]
+    Hz1000 = 0,
+    Hz500 = 1,
+    Hz250 = 2,
+    Hz125 = 3,
+}
+
+impl PollingRate {
+    pub const ALL: [PollingRate; 4] = [Self::Hz1000, Self::Hz500, Self::Hz250, Self::Hz125];
+
+    pub const fn from_wire(val: u8) -> Self {
+        match val {
+            1 => Self::Hz500,
+            2 => Self::Hz250,
+            3 => Self::Hz125,
+            _ => Self::Hz1000,
+        }
+    }
+
+    pub const fn wire_id(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Hz1000 => "1000 Hz",
+            Self::Hz500 => "500 Hz",
+            Self::Hz250 => "250 Hz",
+            Self::Hz125 => "125 Hz",
+        }
+    }
+}
+
+/// Flags de sistema e taxa de polling armazenados junto à iluminação em `Opcode 0x05`/`0x06` (`sub_490e80`/`sub_492b30`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SystemStages {
+    /// Bloqueio da tecla Windows (`HID[29]`: `WinFlag`).
+    pub win_lock: bool,
+    /// Inversão WASD <-> Setas (`HID[27]`: `WFlag`).
+    pub wasd_swap: bool,
+    /// Taxa de polling USB (`HID[30]`: `0=1000Hz, 1=500Hz, 2=250Hz, 3=125Hz`).
+    pub polling_rate: PollingRate,
+    /// Flag de modo 6-Key / NKRO (`HID[28]`: `Key6Flag`, padrão `0xFF`).
+    pub key6_flag: u8,
+    /// Flag de modo Mac (`HID[35]`: `MacMode`, padrão `0`).
+    pub mac_mode: u8,
+    /// Modo de roda/knob (`HID[36]`: `Wheel`, padrão `0`).
+    pub wheel: u8,
+}
+
+impl Default for SystemStages {
+    fn default() -> Self {
+        Self {
+            win_lock: false,
+            wasd_swap: false,
+            polling_rate: PollingRate::Hz1000,
+            key6_flag: 0xFF,
+            mac_mode: 0,
+            wheel: 0,
+        }
+    }
+}
+
+/// Capacidades lidas do firmware via `Opcode 0x03` (`GET_DEVICE_INFO`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceCapabilities {
+    pub total_keys: usize,
+    pub macro_128b_blocks: usize,
+}
+
+impl DeviceCapabilities {
+    /// Tamanho máximo em bytes disponível na flash de macros (`macro_128b_blocks * 128`).
+    pub const fn max_macro_bytes(self) -> usize {
+        self.macro_128b_blocks.saturating_mul(128)
+    }
+}
+
+/// Cache em memória da topologia física/matriz do dispositivo conectado (`0x03` + `0x1B` + `0x07`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareLayoutCache {
+    pub capabilities: DeviceCapabilities,
+    /// Mapeamento `led_map[hw_key_idx] == phys_led` obtido via `Opcode 0x1B`.
+    pub led_map: Vec<u8>,
+    /// Matriz base lida via `Opcode 0x07` (`total_keys * 3` bytes) para preservar slots não visíveis.
+    pub baseline_matrix: Vec<u8>,
 }
 
 /// Direção da animação de iluminação (`Fx` no protocolo oficial).
@@ -147,6 +257,33 @@ impl LightingMode {
         match self {
             Self::Capture => 0xFE,
             other => other as u8,
+        }
+    }
+
+    /// Reconstrói `LightingMode` a partir do byte recebido em `Opcode 0x05` (`GET_CONFIG`).
+    pub const fn from_wire(wire: u8) -> Self {
+        match wire {
+            0x01 => Self::Corrugated,
+            0x02 => Self::Cloud,
+            0x03 => Self::Serpentine,
+            0x04 => Self::Spectrum,
+            0x05 => Self::Breath,
+            0x06 => Self::Static,
+            0x07 => Self::Reaction,
+            0x08 => Self::Ripples,
+            0x09 => Self::Traverse,
+            0x0A => Self::Stars,
+            0x0B => Self::Flowers,
+            0x0C => Self::Roll,
+            0x0D => Self::Wave,
+            0x0E => Self::Cartoon,
+            0x0F => Self::Rain,
+            0x10 => Self::Scan,
+            0x11 => Self::Surmount,
+            0x12 => Self::Speed,
+            0x14 => Self::Custom,
+            0x1E | 0xFE => Self::Capture,
+            _ => Self::Static,
         }
     }
 
@@ -322,6 +459,15 @@ pub struct UserProfile {
     pub lighting: LightingConfig,
     /// Três bancos de iluminação estática individual por tecla (128 LEDs físicos cada).
     pub custom_banks: [Vec<RgbColor>; 3],
+    /// Configurações de sistema no bloco `0x05`/`0x06` (`WinFlag`, `WFlag`, `PollingRate`).
+    #[serde(default)]
+    pub system: SystemStages,
+    /// Sobrescritas de remapeamento por `phys_led` (`AK820_KEY_LAYOUT`).
+    #[serde(default)]
+    pub keymap: BTreeMap<u16, KeyAssignment>,
+    /// Macros definidas pelo usuário.
+    #[serde(default)]
+    pub macros: Vec<MacroDefinition>,
 }
 
 impl Default for UserProfile {
@@ -330,6 +476,9 @@ impl Default for UserProfile {
         Self {
             lighting: LightingConfig::default(),
             custom_banks: [empty.clone(), empty.clone(), empty],
+            system: SystemStages::default(),
+            keymap: BTreeMap::new(),
+            macros: Vec::new(),
         }
     }
 }
@@ -449,9 +598,12 @@ pub fn scale_color_by_brightness(color: RgbColor, brightness: u8) -> RgbColor {
     )
 }
 
-/// Constrói o pacote completo de configuração de iluminação (`Opcode 0x06`, bloco `0x1D` bytes)
-/// conforme extraído de `sub_492b30` / `LightInfo` / `SystemStages`.
-pub fn build_lighting_packet_config(config: &LightingConfig) -> [u8; HID_REPORT_PAYLOAD_SIZE] {
+/// Constrói o pacote completo de configuração (`Opcode 0x06`, bloco `0x1D` bytes)
+/// preservando tanto `LightingConfig` quanto `SystemStages` (`sub_492b30` / `sub_44ab70`).
+pub fn build_config_packet(
+    config: &LightingConfig,
+    system: &SystemStages,
+) -> [u8; HID_REPORT_PAYLOAD_SIZE] {
     let mut cfg = *config;
     cfg.normalize();
 
@@ -468,15 +620,92 @@ pub fn build_lighting_packet_config(config: &LightingConfig) -> [u8; HID_REPORT_
     buf[15] = cfg.color.g;
     buf[16] = cfg.color.b;
     buf[26] = cfg.zzcc_mode;
-    // SystemStages seguros de `sub_492b30` / `ak820_red.pcapng` frame 117 (`WFlag=0` evita inversão WASD<->Setas)
-    buf[27] = 0; // WFlag
-    buf[28] = 0xFF; // Key6Flag
+    buf[27] = u8::from(system.wasd_swap); // WFlag
+    buf[28] = system.key6_flag; // Key6Flag
+    buf[29] = u8::from(system.win_lock); // WinFlag
+    buf[30] = system.polling_rate.wire_id(); // PollingRate (0=1000..3=125Hz)
     buf[33] = cfg.custom_group;
+    buf[35] = system.mac_mode;
+    buf[36] = system.wheel;
 
     let sum = calculate_checksum(&buf);
     buf[1] = (sum & 0xFF) as u8;
     buf[2] = ((sum >> 8) & 0xFF) as u8;
     buf
+}
+
+/// Constrói o pacote completo de configuração de iluminação (`Opcode 0x06`, bloco `0x1D` bytes)
+/// com `SystemStages::default()` (`WFlag=0`, `Key6Flag=0xFF`, `WinFlag=0`, `PollingRate=1000Hz`).
+pub fn build_lighting_packet_config(config: &LightingConfig) -> [u8; HID_REPORT_PAYLOAD_SIZE] {
+    build_config_packet(config, &SystemStages::default())
+}
+
+/// Constrói pacote de leitura genérico (`Opcode 0x03`, `0x05`, etc.) para `len` bytes em `offset`.
+pub fn build_read_command_packet(
+    opcode: u8,
+    offset: u16,
+    len: u8,
+) -> [u8; HID_REPORT_PAYLOAD_SIZE] {
+    let mut buf = [0u8; HID_REPORT_PAYLOAD_SIZE];
+    buf[0] = REPORT_ID_COMMAND;
+    buf[3] = opcode;
+    buf[4] = len;
+    buf[5] = (offset & 0xFF) as u8;
+    buf[6] = (offset >> 8) as u8;
+    let sum = calculate_checksum(&buf);
+    buf[1] = (sum & 0xFF) as u8;
+    buf[2] = ((sum >> 8) & 0xFF) as u8;
+    buf
+}
+
+/// Decodifica o payload de `0x1D` (29) bytes retornado por `Opcode 0x05` (`ack[8..37]`)
+/// para `(LightingConfig, SystemStages)`.
+pub fn parse_config_block(block: &[u8]) -> Result<(LightingConfig, SystemStages), ProtocolError> {
+    if block.len() < 0x1D {
+        return Err(ProtocolError::InvalidPayloadSize {
+            expected: 0x1D,
+            received: block.len(),
+        });
+    }
+    let mut cfg = LightingConfig {
+        mode: LightingMode::from_wire(block[1]),
+        brightness: block[2],
+        speed: 4u8.saturating_sub(block[3]),
+        direction: if block[4] == 1 {
+            LightingDirection::Reverse
+        } else {
+            LightingDirection::Primary
+        },
+        multicolor: block[5] != 0,
+        color: RgbColor::new(block[6], block[7], block[8]),
+        zzcc_mode: block[18],
+        custom_group: block[25],
+    };
+    cfg.normalize();
+
+    let system = SystemStages {
+        wasd_swap: block[19] != 0,
+        key6_flag: block[20],
+        win_lock: block[21] != 0,
+        polling_rate: PollingRate::from_wire(block[22]),
+        mac_mode: block[27],
+        wheel: block[28],
+    };
+    Ok((cfg, system))
+}
+
+/// Decodifica os 34 bytes de `Opcode 0x03` (`GET_DEVICE_INFO`, `ack[8..42]`).
+pub fn parse_device_info_block(info: &[u8]) -> Result<DeviceCapabilities, ProtocolError> {
+    if info.len() < 34 {
+        return Err(ProtocolError::InvalidPayloadSize {
+            expected: 34,
+            received: info.len(),
+        });
+    }
+    Ok(DeviceCapabilities {
+        total_keys: info[5] as usize,
+        macro_128b_blocks: info[6] as usize,
+    })
 }
 
 /// Constrói o pacote legado de configuração de modo e cor de iluminação (Opcode 0x06).
@@ -583,6 +812,7 @@ pub fn build_custom_matrix_packets(
 /// Handle conectado ao teclado AK820 na interface proprietária de controle.
 pub struct Ak820Device {
     device: hidapi::HidDevice,
+    cached_layout: Option<HardwareLayoutCache>,
 }
 
 impl Ak820Device {
@@ -595,7 +825,10 @@ impl Ak820Device {
                 && d.usage() == AK820_VENDOR_USAGE
             {
                 let device = d.open_device(api)?;
-                return Ok(Self { device });
+                return Ok(Self {
+                    device,
+                    cached_layout: None,
+                });
             }
         }
         Err(ProtocolError::DeviceNotFound {
@@ -614,12 +847,12 @@ impl Ak820Device {
         self.device.write(data).map_err(ProtocolError::from)
     }
 
-    /// Escreve um pacote de 64 bytes e lê o ACK correspondente na interface HID (`sub_4781c0`).
-    fn write_packet_with_ack(
+    /// Escreve um pacote de 64 bytes e retorna o relatório ACK completo (`sub_4781c0`).
+    fn write_packet_with_ack_response(
         &mut self,
         pkt: &[u8; HID_REPORT_PAYLOAD_SIZE],
         timeout_ms: i32,
-    ) -> Result<(), ProtocolError> {
+    ) -> Result<[u8; HID_REPORT_PAYLOAD_SIZE], ProtocolError> {
         self.device.write(pkt)?;
         let expected_opcode = pkt[3];
         let mut ack = [0u8; HID_REPORT_PAYLOAD_SIZE];
@@ -635,24 +868,124 @@ impl Ak820Device {
                         status: ack[7],
                     });
                 }
-                return Ok(());
+                return Ok(ack);
             }
+        }
+        Err(ProtocolError::ResponseTimeout {
+            opcode: expected_opcode,
+        })
+    }
+
+    /// Escreve um pacote de 64 bytes e lê o ACK correspondente na interface HID (`sub_4781c0`).
+    fn write_packet_with_ack(
+        &mut self,
+        pkt: &[u8; HID_REPORT_PAYLOAD_SIZE],
+        timeout_ms: i32,
+    ) -> Result<(), ProtocolError> {
+        match self.write_packet_with_ack_response(pkt, timeout_ms) {
+            Ok(_) | Err(ProtocolError::ResponseTimeout { .. }) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Lê um buffer em chunks de até 56 bytes via `build_chunked_read_packets`.
+    fn read_chunked(
+        &mut self,
+        opcode: u8,
+        base_offset: u16,
+        total_len: usize,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let mut out = Vec::with_capacity(total_len);
+        for (_off, pkt) in build_chunked_read_packets(opcode, base_offset, total_len) {
+            let chunk_len = pkt[4] as usize;
+            let ack = self.write_packet_with_ack_response(&pkt, 300)?;
+            out.extend_from_slice(&ack[8..8 + chunk_len]);
+        }
+        Ok(out)
+    }
+
+    /// Escreve um buffer em chunks de até 56 bytes aguardando ACK em cada pacote.
+    fn write_chunked(
+        &mut self,
+        opcode: u8,
+        base_offset: u16,
+        data: &[u8],
+    ) -> Result<(), ProtocolError> {
+        for pkt in build_chunked_transfer_packets(opcode, base_offset, data) {
+            self.write_packet_with_ack(&pkt, 300)?;
         }
         Ok(())
     }
 
-    /// Envia uma sequência transacional completa de alteração de iluminação usando `LightingConfig`.
-    pub fn apply_lighting(&mut self, config: &LightingConfig) -> Result<(), ProtocolError> {
+    /// Executa transação `0x01 -> f() -> sleep(10ms) -> 0x02` (`sub_479200`).
+    fn with_transaction<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, ProtocolError>,
+    ) -> Result<T, ProtocolError> {
         let p_begin = build_begin_transaction_packet();
         self.write_packet_with_ack(&p_begin, 300)?;
-
-        let p_light = build_lighting_packet_config(config);
-        self.write_packet_with_ack(&p_light, 300)?;
-
+        let res = f(self)?;
+        std::thread::sleep(Duration::from_millis(10));
         let p_commit = build_commit_transaction_packet();
         self.write_packet_with_ack(&p_commit, 300)?;
+        Ok(res)
+    }
 
-        Ok(())
+    /// Lê capacidades (`Opcode 0x03`: `total_keys` e blocos de macro).
+    pub fn read_device_capabilities(&mut self) -> Result<DeviceCapabilities, ProtocolError> {
+        let pkt = build_read_command_packet(OPCODE_GET_DEVICE_INFO, 0, 34);
+        let ack = self.write_packet_with_ack_response(&pkt, 300)?;
+        parse_device_info_block(&ack[8..42])
+    }
+
+    /// Lê a configuração atual (`Opcode 0x05`: `LightingConfig` e `SystemStages`).
+    pub fn read_config(&mut self) -> Result<(LightingConfig, SystemStages), ProtocolError> {
+        self.with_transaction(|dev| {
+            let p_prof = build_read_command_packet(OPCODE_GET_CONFIG, 0, 1);
+            let ack_prof = dev.write_packet_with_ack_response(&p_prof, 300)?;
+            let active_profile = ack_prof[8] as u16;
+            let p_cfg =
+                build_read_command_packet(OPCODE_GET_CONFIG, active_profile.saturating_mul(0x1D), 0x1D);
+            let ack_cfg = dev.write_packet_with_ack_response(&p_cfg, 300)?;
+            parse_config_block(&ack_cfg[8..37])
+        })
+    }
+
+    /// Obtém e memoriza `HardwareLayoutCache` (`0x03`, `0x1B`, `0x07`) em sessão.
+    pub fn ensure_hardware_layout(&mut self) -> Result<HardwareLayoutCache, ProtocolError> {
+        if let Some(cache) = &self.cached_layout {
+            return Ok(cache.clone());
+        }
+        let cache = self.with_transaction(|dev| {
+            let capabilities = dev.read_device_capabilities()?;
+            let total_keys = capabilities.total_keys;
+            let led_map = dev.read_chunked(OPCODE_GET_LED_MAPPING, 0, total_keys)?;
+            let baseline_matrix = dev.read_chunked(OPCODE_GET_KEY_MATRIX, 0, total_keys * 3)?;
+            Ok(HardwareLayoutCache {
+                capabilities,
+                led_map,
+                baseline_matrix,
+            })
+        })?;
+        self.cached_layout = Some(cache.clone());
+        Ok(cache)
+    }
+
+    /// Envia sequência transacional `0x01 -> 0x06 -> 0x02` com `LightingConfig` e `SystemStages`.
+    pub fn apply_config(
+        &mut self,
+        config: &LightingConfig,
+        system: &SystemStages,
+    ) -> Result<(), ProtocolError> {
+        self.with_transaction(|dev| {
+            let p_cfg = build_config_packet(config, system);
+            dev.write_packet_with_ack(&p_cfg, 300)
+        })
+    }
+
+    /// Envia uma sequência transacional completa de alteração de iluminação usando `LightingConfig`.
+    pub fn apply_lighting(&mut self, config: &LightingConfig) -> Result<(), ProtocolError> {
+        self.apply_config(config, &SystemStages::default())
     }
 
     /// Envia uma sequência transacional completa de alteração de iluminação (API simplificada).
@@ -691,6 +1024,26 @@ impl Ak820Device {
         })
     }
 
+    /// Grava um banco Custom (`0..=2`) preservando `SystemStages` no pacote `0x06`.
+    pub fn apply_custom_bank_with_system(
+        &mut self,
+        config: &LightingConfig,
+        system: &SystemStages,
+        colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+    ) -> Result<(), ProtocolError> {
+        let mut custom_cfg = *config;
+        custom_cfg.mode = LightingMode::Custom;
+        custom_cfg.normalize();
+
+        self.apply_config(&custom_cfg, system)?;
+
+        let packets = build_custom_matrix_packets_for_bank(custom_cfg.custom_group, colors);
+        for pkt in &packets {
+            self.write_packet_with_ack(pkt, 300)?;
+        }
+        Ok(())
+    }
+
     /// Grava um banco Custom (`0..=2`) em modo estático por tecla conforme `sub_492b30` + `sub_49f280`:
     /// primeiro fecha a transação `0x01 -> 0x06 -> 0x02` com `mode = Custom` (`multicolor = false`) e em seguida
     /// envia os 7 pacotes `Opcode 0x0B` aguardando ACK HID por pacote (`sub_4781c0`).
@@ -699,15 +1052,33 @@ impl Ak820Device {
         config: &LightingConfig,
         colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
     ) -> Result<(), ProtocolError> {
-        let mut custom_cfg = *config;
-        custom_cfg.mode = LightingMode::Custom;
-        custom_cfg.normalize();
+        self.apply_custom_bank_with_system(config, &SystemStages::default(), colors)
+    }
 
-        self.apply_lighting(&custom_cfg)?;
+    /// Compila e grava macros (`0x15`) e matriz de remapeamento (`0x09`) no teclado via transações `0x01..0x02`.
+    pub fn apply_keymap_and_macros(
+        &mut self,
+        overrides: &BTreeMap<u16, KeyAssignment>,
+        macros: &[MacroDefinition],
+    ) -> Result<(), ProtocolError> {
+        let layout = self.ensure_hardware_layout()?;
+        let max_macro_bytes = layout.capabilities.max_macro_bytes();
+        let (macro_blob_opt, matrix_bytes) = compile_keymap_and_macros(
+            &layout.baseline_matrix,
+            &layout.led_map,
+            overrides,
+            macros,
+            max_macro_bytes,
+        )?;
 
-        let packets = build_custom_matrix_packets_for_bank(custom_cfg.custom_group, colors);
-        for pkt in &packets {
-            self.write_packet_with_ack(pkt, 300)?;
+        if let Some(blob) = macro_blob_opt {
+            self.with_transaction(|dev| dev.write_chunked(OPCODE_SET_MACROS, 0, &blob))?;
+        }
+
+        self.with_transaction(|dev| dev.write_chunked(OPCODE_SET_KEY_MATRIX, 0, &matrix_bytes))?;
+
+        if let Some(cache) = &mut self.cached_layout {
+            cache.baseline_matrix = matrix_bytes;
         }
         Ok(())
     }
@@ -903,5 +1274,124 @@ mod tests {
         let bank2 = build_custom_matrix_packets_for_bank(2, &colors);
         assert_eq!((bank1[0][5] as usize) | ((bank1[0][6] as usize) << 8), 0x0200);
         assert_eq!((bank2[0][5] as usize) | ((bank2[0][6] as usize) << 8), 0x0400);
+    }
+
+    #[test]
+    fn test_config_packet_system_stages_roundtrip() {
+        let cfg = LightingConfig {
+            mode: LightingMode::Wave,
+            brightness: 2,
+            speed: 3,
+            direction: LightingDirection::Reverse,
+            multicolor: false,
+            color: RgbColor::new(0x11, 0x22, 0x33),
+            zzcc_mode: 1,
+            custom_group: 1,
+        };
+        let sys = SystemStages {
+            win_lock: true,
+            wasd_swap: true,
+            polling_rate: PollingRate::Hz250,
+            key6_flag: 0x01,
+            mac_mode: 1,
+            wheel: 2,
+        };
+        let pkt = build_config_packet(&cfg, &sys);
+        assert_eq!(pkt[27], 1); // WFlag
+        assert_eq!(pkt[28], 1); // Key6Flag
+        assert_eq!(pkt[29], 1); // WinFlag
+        assert_eq!(pkt[30], 2); // PollingRate 250Hz
+        assert_eq!(pkt[35], 1); // MacMode
+        assert_eq!(pkt[36], 2); // Wheel
+
+        let (parsed_cfg, parsed_sys) = parse_config_block(&pkt[8..37]).unwrap();
+        assert_eq!(parsed_cfg, cfg);
+        assert_eq!(parsed_sys, sys);
+    }
+
+    #[test]
+    fn test_keymap_assignment_roundtrips() {
+        let samples = [
+            KeyAssignment::Disabled,
+            KeyAssignment::KeyCombo {
+                modifiers: 0x03,
+                hid_usage: 0x04,
+            },
+            KeyAssignment::Mouse(MouseButton::Back),
+            KeyAssignment::Media(MediaKey::PlayPause),
+            KeyAssignment::System(SystemKey::Sleep),
+            KeyAssignment::Layer(1),
+            KeyAssignment::Fn,
+        ];
+        for sample in samples {
+            let wire = sample.to_wire_bytes_with_macro_index(None).unwrap();
+            let decoded = KeyAssignment::from_wire_bytes(wire);
+            assert_eq!(decoded, sample);
+        }
+        assert_eq!(AK820_FACTORY_ASSIGNMENTS.len(), VISIBLE_KEYS_COUNT);
+    }
+
+    #[test]
+    fn test_macro_container_and_compile_keymap_roundtrip() {
+        let m1 = MacroDefinition {
+            id: "m1".to_string(),
+            name: "Copy".to_string(),
+            steps: vec![
+                MacroStep {
+                    delay_ms: 15,
+                    action: MacroAction::Modifier {
+                        bitmask: 0x01,
+                        down: true,
+                    },
+                },
+                MacroStep {
+                    delay_ms: 20,
+                    action: MacroAction::Key {
+                        hid_usage: 0x06,
+                        down: true,
+                    },
+                },
+                MacroStep {
+                    delay_ms: 25,
+                    action: MacroAction::MouseMoveX { delta: -12 },
+                },
+            ],
+        };
+        let blob = build_macro_container_blob(&[&m1], 512).unwrap();
+        assert_eq!(blob[0], 0xAA);
+        assert_eq!(blob[1], 0x55);
+        let parsed = parse_macro_container_blob(&blob).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0], m1.steps);
+
+        // Simula matriz de 2 slots físicos: slot 0 -> phys_led da 1ª tecla (Esc = 0), slot 1 -> slot oculto (0xFF)
+        let esc_led = AK820_KEY_LAYOUT[0].phys_led as u8;
+        let led_map = vec![esc_led, 0xFF];
+        let baseline = vec![0x20, 0x00, 0x29, 0xAA, 0xBB, 0xCC];
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            esc_led as u16,
+            KeyAssignment::Macro {
+                macro_id: "m1".to_string(),
+                mode: MacroTriggerMode::Repeat(3),
+            },
+        );
+        let (macro_opt, out_matrix) = compile_keymap_and_macros(
+            &baseline,
+            &led_map,
+            &overrides,
+            std::slice::from_ref(&m1),
+            512,
+        )
+        .unwrap();
+        assert!(macro_opt.is_some());
+        assert_eq!(&out_matrix[0..3], &[0x71, 0x00, 0x03]); // Macro 0, Repeat 3
+        assert_eq!(&out_matrix[3..6], &[0xAA, 0xBB, 0xCC]); // Slot oculto preservado
+
+        // Restaura padrão de fábrica quando overrides está vazio
+        let (no_macro, restored) =
+            compile_keymap_and_macros(&out_matrix, &led_map, &BTreeMap::new(), &[m1], 512).unwrap();
+        assert!(no_macro.is_none());
+        assert_eq!(&restored[0..3], &AK820_FACTORY_ASSIGNMENTS[0]);
     }
 }

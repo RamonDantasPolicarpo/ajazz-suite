@@ -6,6 +6,8 @@ export component KeyboardView inherits Rectangle {
     in property <bool> has-led: false;
     in property <[color]> key-colors: [];
     in property <string> chattering-key: "";
+    in property <int> selected-key-idx: -1;
+    in property <[bool]> remapped-keys: [];
 
     callback key-clicked(int);
 
@@ -17,6 +19,10 @@ export component KeyboardView inherits Rectangle {
         idx < root.key-colors.length ? root.key-colors[idx] != #000000 : root.has-led
     }
 
+    pure function key-remapped(idx: int) -> bool {
+        idx < root.remapped-keys.length ? root.remapped-keys[idx] : false
+    }
+
     width: 720px;
     background: Theme.surface;
     border-radius: Theme.radius-lg;
@@ -25,8 +31,8 @@ export component KeyboardView inherits Rectangle {
 
     HorizontalLayout {
         alignment: center;
-        padding-top: 14px;
-        padding-bottom: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
 
         VerticalLayout {
             width: 572px;
@@ -38,37 +44,37 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "ESC"; key-width: 32px; led-color: root.resolved-color(0); has-led: root.key-active(0); has-chattering: root.chattering-key == "ESC"; clicked => { root.key-clicked(0); } }
+                Keycap { label: "ESC"; key-width: 32px; led-color: root.resolved-color(0); has-led: root.key-active(0); has-chattering: root.chattering-key == "ESC"; is-selected: root.selected-key-idx == 0; is-remapped: root.key-remapped(0); clicked => { root.key-clicked(0); } }
                 Rectangle { width: 10px; }
 
-                Keycap { label: "F1"; key-width: 32px; led-color: root.resolved-color(1); has-led: root.key-active(1); clicked => { root.key-clicked(1); } }
+                Keycap { label: "F1"; key-width: 32px; led-color: root.resolved-color(1); has-led: root.key-active(1); is-selected: root.selected-key-idx == 1; is-remapped: root.key-remapped(1); clicked => { root.key-clicked(1); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F2"; key-width: 32px; led-color: root.resolved-color(2); has-led: root.key-active(2); clicked => { root.key-clicked(2); } }
+                Keycap { label: "F2"; key-width: 32px; led-color: root.resolved-color(2); has-led: root.key-active(2); is-selected: root.selected-key-idx == 2; is-remapped: root.key-remapped(2); clicked => { root.key-clicked(2); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F3"; key-width: 32px; led-color: root.resolved-color(3); has-led: root.key-active(3); clicked => { root.key-clicked(3); } }
+                Keycap { label: "F3"; key-width: 32px; led-color: root.resolved-color(3); has-led: root.key-active(3); is-selected: root.selected-key-idx == 3; is-remapped: root.key-remapped(3); clicked => { root.key-clicked(3); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F4"; key-width: 32px; led-color: root.resolved-color(4); has-led: root.key-active(4); clicked => { root.key-clicked(4); } }
+                Keycap { label: "F4"; key-width: 32px; led-color: root.resolved-color(4); has-led: root.key-active(4); is-selected: root.selected-key-idx == 4; is-remapped: root.key-remapped(4); clicked => { root.key-clicked(4); } }
                 Rectangle { width: 10px; }
 
-                Keycap { label: "F5"; key-width: 32px; led-color: root.resolved-color(5); has-led: root.key-active(5); clicked => { root.key-clicked(5); } }
+                Keycap { label: "F5"; key-width: 32px; led-color: root.resolved-color(5); has-led: root.key-active(5); is-selected: root.selected-key-idx == 5; is-remapped: root.key-remapped(5); clicked => { root.key-clicked(5); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F6"; key-width: 32px; led-color: root.resolved-color(6); has-led: root.key-active(6); clicked => { root.key-clicked(6); } }
+                Keycap { label: "F6"; key-width: 32px; led-color: root.resolved-color(6); has-led: root.key-active(6); is-selected: root.selected-key-idx == 6; is-remapped: root.key-remapped(6); clicked => { root.key-clicked(6); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F7"; key-width: 32px; led-color: root.resolved-color(7); has-led: root.key-active(7); clicked => { root.key-clicked(7); } }
+                Keycap { label: "F7"; key-width: 32px; led-color: root.resolved-color(7); has-led: root.key-active(7); is-selected: root.selected-key-idx == 7; is-remapped: root.key-remapped(7); clicked => { root.key-clicked(7); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F8"; key-width: 32px; led-color: root.resolved-color(8); has-led: root.key-active(8); clicked => { root.key-clicked(8); } }
+                Keycap { label: "F8"; key-width: 32px; led-color: root.resolved-color(8); has-led: root.key-active(8); is-selected: root.selected-key-idx == 8; is-remapped: root.key-remapped(8); clicked => { root.key-clicked(8); } }
                 Rectangle { width: 10px; }
 
-                Keycap { label: "F9"; key-width: 32px; led-color: root.resolved-color(9); has-led: root.key-active(9); clicked => { root.key-clicked(9); } }
+                Keycap { label: "F9"; key-width: 32px; led-color: root.resolved-color(9); has-led: root.key-active(9); is-selected: root.selected-key-idx == 9; is-remapped: root.key-remapped(9); clicked => { root.key-clicked(9); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F10"; key-width: 32px; led-color: root.resolved-color(10); has-led: root.key-active(10); clicked => { root.key-clicked(10); } }
+                Keycap { label: "F10"; key-width: 32px; led-color: root.resolved-color(10); has-led: root.key-active(10); is-selected: root.selected-key-idx == 10; is-remapped: root.key-remapped(10); clicked => { root.key-clicked(10); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F11"; key-width: 32px; led-color: root.resolved-color(11); has-led: root.key-active(11); clicked => { root.key-clicked(11); } }
+                Keycap { label: "F11"; key-width: 32px; led-color: root.resolved-color(11); has-led: root.key-active(11); is-selected: root.selected-key-idx == 11; is-remapped: root.key-remapped(11); clicked => { root.key-clicked(11); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F12"; key-width: 32px; led-color: root.resolved-color(12); has-led: root.key-active(12); clicked => { root.key-clicked(12); } }
+                Keycap { label: "F12"; key-width: 32px; led-color: root.resolved-color(12); has-led: root.key-active(12); is-selected: root.selected-key-idx == 12; is-remapped: root.key-remapped(12); clicked => { root.key-clicked(12); } }
                 Rectangle { width: 10px; }
 
-                Keycap { label: "DEL"; key-width: 32px; led-color: root.resolved-color(13); has-led: root.key-active(13); clicked => { root.key-clicked(13); } }
+                Keycap { label: "DEL"; key-width: 32px; led-color: root.resolved-color(13); has-led: root.key-active(13); is-selected: root.selected-key-idx == 13; is-remapped: root.key-remapped(13); clicked => { root.key-clicked(13); } }
                 Rectangle { width: 14px; }
                 Keycap { label: ""; key-width: 34px; is-knob: true; led-color: root.global-led-color; has-led: false; }
             }
@@ -78,35 +84,35 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "`"; key-width: 32px; led-color: root.resolved-color(14); has-led: root.key-active(14); clicked => { root.key-clicked(14); } }
+                Keycap { label: "`"; key-width: 32px; led-color: root.resolved-color(14); has-led: root.key-active(14); is-selected: root.selected-key-idx == 14; is-remapped: root.key-remapped(14); clicked => { root.key-clicked(14); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "1"; key-width: 32px; led-color: root.resolved-color(15); has-led: root.key-active(15); clicked => { root.key-clicked(15); } }
+                Keycap { label: "1"; key-width: 32px; led-color: root.resolved-color(15); has-led: root.key-active(15); is-selected: root.selected-key-idx == 15; is-remapped: root.key-remapped(15); clicked => { root.key-clicked(15); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "2"; key-width: 32px; led-color: root.resolved-color(16); has-led: root.key-active(16); clicked => { root.key-clicked(16); } }
+                Keycap { label: "2"; key-width: 32px; led-color: root.resolved-color(16); has-led: root.key-active(16); is-selected: root.selected-key-idx == 16; is-remapped: root.key-remapped(16); clicked => { root.key-clicked(16); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "3"; key-width: 32px; led-color: root.resolved-color(17); has-led: root.key-active(17); clicked => { root.key-clicked(17); } }
+                Keycap { label: "3"; key-width: 32px; led-color: root.resolved-color(17); has-led: root.key-active(17); is-selected: root.selected-key-idx == 17; is-remapped: root.key-remapped(17); clicked => { root.key-clicked(17); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "4"; key-width: 32px; led-color: root.resolved-color(18); has-led: root.key-active(18); clicked => { root.key-clicked(18); } }
+                Keycap { label: "4"; key-width: 32px; led-color: root.resolved-color(18); has-led: root.key-active(18); is-selected: root.selected-key-idx == 18; is-remapped: root.key-remapped(18); clicked => { root.key-clicked(18); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "5"; key-width: 32px; led-color: root.resolved-color(19); has-led: root.key-active(19); clicked => { root.key-clicked(19); } }
+                Keycap { label: "5"; key-width: 32px; led-color: root.resolved-color(19); has-led: root.key-active(19); is-selected: root.selected-key-idx == 19; is-remapped: root.key-remapped(19); clicked => { root.key-clicked(19); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "6"; key-width: 32px; led-color: root.resolved-color(20); has-led: root.key-active(20); clicked => { root.key-clicked(20); } }
+                Keycap { label: "6"; key-width: 32px; led-color: root.resolved-color(20); has-led: root.key-active(20); is-selected: root.selected-key-idx == 20; is-remapped: root.key-remapped(20); clicked => { root.key-clicked(20); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "7"; key-width: 32px; led-color: root.resolved-color(21); has-led: root.key-active(21); clicked => { root.key-clicked(21); } }
+                Keycap { label: "7"; key-width: 32px; led-color: root.resolved-color(21); has-led: root.key-active(21); is-selected: root.selected-key-idx == 21; is-remapped: root.key-remapped(21); clicked => { root.key-clicked(21); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "8"; key-width: 32px; led-color: root.resolved-color(22); has-led: root.key-active(22); clicked => { root.key-clicked(22); } }
+                Keycap { label: "8"; key-width: 32px; led-color: root.resolved-color(22); has-led: root.key-active(22); is-selected: root.selected-key-idx == 22; is-remapped: root.key-remapped(22); clicked => { root.key-clicked(22); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "9"; key-width: 32px; led-color: root.resolved-color(23); has-led: root.key-active(23); clicked => { root.key-clicked(23); } }
+                Keycap { label: "9"; key-width: 32px; led-color: root.resolved-color(23); has-led: root.key-active(23); is-selected: root.selected-key-idx == 23; is-remapped: root.key-remapped(23); clicked => { root.key-clicked(23); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "0"; key-width: 32px; led-color: root.resolved-color(24); has-led: root.key-active(24); clicked => { root.key-clicked(24); } }
+                Keycap { label: "0"; key-width: 32px; led-color: root.resolved-color(24); has-led: root.key-active(24); is-selected: root.selected-key-idx == 24; is-remapped: root.key-remapped(24); clicked => { root.key-clicked(24); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "-"; key-width: 32px; led-color: root.resolved-color(25); has-led: root.key-active(25); clicked => { root.key-clicked(25); } }
+                Keycap { label: "-"; key-width: 32px; led-color: root.resolved-color(25); has-led: root.key-active(25); is-selected: root.selected-key-idx == 25; is-remapped: root.key-remapped(25); clicked => { root.key-clicked(25); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "="; key-width: 32px; led-color: root.resolved-color(26); has-led: root.key-active(26); clicked => { root.key-clicked(26); } }
+                Keycap { label: "="; key-width: 32px; led-color: root.resolved-color(26); has-led: root.key-active(26); is-selected: root.selected-key-idx == 26; is-remapped: root.key-remapped(26); clicked => { root.key-clicked(26); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "BKSP"; key-width: 68px; led-color: root.resolved-color(27); has-led: root.key-active(27); clicked => { root.key-clicked(27); } }
+                Keycap { label: "BKSP"; key-width: 68px; led-color: root.resolved-color(27); has-led: root.key-active(27); is-selected: root.selected-key-idx == 27; is-remapped: root.key-remapped(27); clicked => { root.key-clicked(27); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "HOME"; key-width: 32px; led-color: root.resolved-color(28); has-led: root.key-active(28); clicked => { root.key-clicked(28); } }
+                Keycap { label: "HOME"; key-width: 32px; led-color: root.resolved-color(28); has-led: root.key-active(28); is-selected: root.selected-key-idx == 28; is-remapped: root.key-remapped(28); clicked => { root.key-clicked(28); } }
             }
 
             // Row 2: TAB(29) + Q..\(42) + PGUP(43)
@@ -114,35 +120,35 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "TAB"; key-width: 50px; led-color: root.resolved-color(29); has-led: root.key-active(29); clicked => { root.key-clicked(29); } }
+                Keycap { label: "TAB"; key-width: 50px; led-color: root.resolved-color(29); has-led: root.key-active(29); is-selected: root.selected-key-idx == 29; is-remapped: root.key-remapped(29); clicked => { root.key-clicked(29); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "Q"; key-width: 32px; led-color: root.resolved-color(30); has-led: root.key-active(30); clicked => { root.key-clicked(30); } }
+                Keycap { label: "Q"; key-width: 32px; led-color: root.resolved-color(30); has-led: root.key-active(30); is-selected: root.selected-key-idx == 30; is-remapped: root.key-remapped(30); clicked => { root.key-clicked(30); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "W"; key-width: 32px; led-color: root.resolved-color(31); has-led: root.key-active(31); clicked => { root.key-clicked(31); } }
+                Keycap { label: "W"; key-width: 32px; led-color: root.resolved-color(31); has-led: root.key-active(31); is-selected: root.selected-key-idx == 31; is-remapped: root.key-remapped(31); clicked => { root.key-clicked(31); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "E"; key-width: 32px; led-color: root.resolved-color(32); has-led: root.key-active(32); clicked => { root.key-clicked(32); } }
+                Keycap { label: "E"; key-width: 32px; led-color: root.resolved-color(32); has-led: root.key-active(32); is-selected: root.selected-key-idx == 32; is-remapped: root.key-remapped(32); clicked => { root.key-clicked(32); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "R"; key-width: 32px; led-color: root.resolved-color(33); has-led: root.key-active(33); clicked => { root.key-clicked(33); } }
+                Keycap { label: "R"; key-width: 32px; led-color: root.resolved-color(33); has-led: root.key-active(33); is-selected: root.selected-key-idx == 33; is-remapped: root.key-remapped(33); clicked => { root.key-clicked(33); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "T"; key-width: 32px; led-color: root.resolved-color(34); has-led: root.key-active(34); clicked => { root.key-clicked(34); } }
+                Keycap { label: "T"; key-width: 32px; led-color: root.resolved-color(34); has-led: root.key-active(34); is-selected: root.selected-key-idx == 34; is-remapped: root.key-remapped(34); clicked => { root.key-clicked(34); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "Y"; key-width: 32px; led-color: root.resolved-color(35); has-led: root.key-active(35); clicked => { root.key-clicked(35); } }
+                Keycap { label: "Y"; key-width: 32px; led-color: root.resolved-color(35); has-led: root.key-active(35); is-selected: root.selected-key-idx == 35; is-remapped: root.key-remapped(35); clicked => { root.key-clicked(35); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "U"; key-width: 32px; led-color: root.resolved-color(36); has-led: root.key-active(36); clicked => { root.key-clicked(36); } }
+                Keycap { label: "U"; key-width: 32px; led-color: root.resolved-color(36); has-led: root.key-active(36); is-selected: root.selected-key-idx == 36; is-remapped: root.key-remapped(36); clicked => { root.key-clicked(36); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "I"; key-width: 32px; led-color: root.resolved-color(37); has-led: root.key-active(37); clicked => { root.key-clicked(37); } }
+                Keycap { label: "I"; key-width: 32px; led-color: root.resolved-color(37); has-led: root.key-active(37); is-selected: root.selected-key-idx == 37; is-remapped: root.key-remapped(37); clicked => { root.key-clicked(37); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "O"; key-width: 32px; led-color: root.resolved-color(38); has-led: root.key-active(38); clicked => { root.key-clicked(38); } }
+                Keycap { label: "O"; key-width: 32px; led-color: root.resolved-color(38); has-led: root.key-active(38); is-selected: root.selected-key-idx == 38; is-remapped: root.key-remapped(38); clicked => { root.key-clicked(38); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "P"; key-width: 32px; led-color: root.resolved-color(39); has-led: root.key-active(39); clicked => { root.key-clicked(39); } }
+                Keycap { label: "P"; key-width: 32px; led-color: root.resolved-color(39); has-led: root.key-active(39); is-selected: root.selected-key-idx == 39; is-remapped: root.key-remapped(39); clicked => { root.key-clicked(39); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "["; key-width: 32px; led-color: root.resolved-color(40); has-led: root.key-active(40); clicked => { root.key-clicked(40); } }
+                Keycap { label: "["; key-width: 32px; led-color: root.resolved-color(40); has-led: root.key-active(40); is-selected: root.selected-key-idx == 40; is-remapped: root.key-remapped(40); clicked => { root.key-clicked(40); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "]"; key-width: 32px; led-color: root.resolved-color(41); has-led: root.key-active(41); clicked => { root.key-clicked(41); } }
+                Keycap { label: "]"; key-width: 32px; led-color: root.resolved-color(41); has-led: root.key-active(41); is-selected: root.selected-key-idx == 41; is-remapped: root.key-remapped(41); clicked => { root.key-clicked(41); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "\\"; key-width: 50px; led-color: root.resolved-color(42); has-led: root.key-active(42); clicked => { root.key-clicked(42); } }
+                Keycap { label: "\\"; key-width: 50px; led-color: root.resolved-color(42); has-led: root.key-active(42); is-selected: root.selected-key-idx == 42; is-remapped: root.key-remapped(42); clicked => { root.key-clicked(42); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "PGUP"; key-width: 32px; led-color: root.resolved-color(43); has-led: root.key-active(43); clicked => { root.key-clicked(43); } }
+                Keycap { label: "PGUP"; key-width: 32px; led-color: root.resolved-color(43); has-led: root.key-active(43); is-selected: root.selected-key-idx == 43; is-remapped: root.key-remapped(43); clicked => { root.key-clicked(43); } }
             }
 
             // Row 3: CAPS(44) + A..'(55) + ENTER(56) + PGDN(57)
@@ -150,33 +156,33 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "CAPS"; key-width: 58px; led-color: root.resolved-color(44); has-led: root.key-active(44); clicked => { root.key-clicked(44); } }
+                Keycap { label: "CAPS"; key-width: 58px; led-color: root.resolved-color(44); has-led: root.key-active(44); is-selected: root.selected-key-idx == 44; is-remapped: root.key-remapped(44); clicked => { root.key-clicked(44); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "A"; key-width: 32px; led-color: root.resolved-color(45); has-led: root.key-active(45); clicked => { root.key-clicked(45); } }
+                Keycap { label: "A"; key-width: 32px; led-color: root.resolved-color(45); has-led: root.key-active(45); is-selected: root.selected-key-idx == 45; is-remapped: root.key-remapped(45); clicked => { root.key-clicked(45); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "S"; key-width: 32px; led-color: root.resolved-color(46); has-led: root.key-active(46); clicked => { root.key-clicked(46); } }
+                Keycap { label: "S"; key-width: 32px; led-color: root.resolved-color(46); has-led: root.key-active(46); is-selected: root.selected-key-idx == 46; is-remapped: root.key-remapped(46); clicked => { root.key-clicked(46); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "D"; key-width: 32px; led-color: root.resolved-color(47); has-led: root.key-active(47); clicked => { root.key-clicked(47); } }
+                Keycap { label: "D"; key-width: 32px; led-color: root.resolved-color(47); has-led: root.key-active(47); is-selected: root.selected-key-idx == 47; is-remapped: root.key-remapped(47); clicked => { root.key-clicked(47); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "F"; key-width: 32px; led-color: root.resolved-color(48); has-led: root.key-active(48); clicked => { root.key-clicked(48); } }
+                Keycap { label: "F"; key-width: 32px; led-color: root.resolved-color(48); has-led: root.key-active(48); is-selected: root.selected-key-idx == 48; is-remapped: root.key-remapped(48); clicked => { root.key-clicked(48); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "G"; key-width: 32px; led-color: root.resolved-color(49); has-led: root.key-active(49); clicked => { root.key-clicked(49); } }
+                Keycap { label: "G"; key-width: 32px; led-color: root.resolved-color(49); has-led: root.key-active(49); is-selected: root.selected-key-idx == 49; is-remapped: root.key-remapped(49); clicked => { root.key-clicked(49); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "H"; key-width: 32px; led-color: root.resolved-color(50); has-led: root.key-active(50); clicked => { root.key-clicked(50); } }
+                Keycap { label: "H"; key-width: 32px; led-color: root.resolved-color(50); has-led: root.key-active(50); is-selected: root.selected-key-idx == 50; is-remapped: root.key-remapped(50); clicked => { root.key-clicked(50); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "J"; key-width: 32px; led-color: root.resolved-color(51); has-led: root.key-active(51); clicked => { root.key-clicked(51); } }
+                Keycap { label: "J"; key-width: 32px; led-color: root.resolved-color(51); has-led: root.key-active(51); is-selected: root.selected-key-idx == 51; is-remapped: root.key-remapped(51); clicked => { root.key-clicked(51); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "K"; key-width: 32px; led-color: root.resolved-color(52); has-led: root.key-active(52); clicked => { root.key-clicked(52); } }
+                Keycap { label: "K"; key-width: 32px; led-color: root.resolved-color(52); has-led: root.key-active(52); is-selected: root.selected-key-idx == 52; is-remapped: root.key-remapped(52); clicked => { root.key-clicked(52); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "L"; key-width: 32px; led-color: root.resolved-color(53); has-led: root.key-active(53); clicked => { root.key-clicked(53); } }
+                Keycap { label: "L"; key-width: 32px; led-color: root.resolved-color(53); has-led: root.key-active(53); is-selected: root.selected-key-idx == 53; is-remapped: root.key-remapped(53); clicked => { root.key-clicked(53); } }
                 Rectangle { width: 4px; }
-                Keycap { label: ";"; key-width: 32px; led-color: root.resolved-color(54); has-led: root.key-active(54); clicked => { root.key-clicked(54); } }
+                Keycap { label: ";"; key-width: 32px; led-color: root.resolved-color(54); has-led: root.key-active(54); is-selected: root.selected-key-idx == 54; is-remapped: root.key-remapped(54); clicked => { root.key-clicked(54); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "'"; key-width: 32px; led-color: root.resolved-color(55); has-led: root.key-active(55); clicked => { root.key-clicked(55); } }
+                Keycap { label: "'"; key-width: 32px; led-color: root.resolved-color(55); has-led: root.key-active(55); is-selected: root.selected-key-idx == 55; is-remapped: root.key-remapped(55); clicked => { root.key-clicked(55); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "ENTER"; key-width: 78px; led-color: root.resolved-color(56); has-led: root.key-active(56); clicked => { root.key-clicked(56); } }
+                Keycap { label: "ENTER"; key-width: 78px; led-color: root.resolved-color(56); has-led: root.key-active(56); is-selected: root.selected-key-idx == 56; is-remapped: root.key-remapped(56); clicked => { root.key-clicked(56); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "PGDN"; key-width: 32px; led-color: root.resolved-color(57); has-led: root.key-active(57); clicked => { root.key-clicked(57); } }
+                Keycap { label: "PGDN"; key-width: 32px; led-color: root.resolved-color(57); has-led: root.key-active(57); is-selected: root.selected-key-idx == 57; is-remapped: root.key-remapped(57); clicked => { root.key-clicked(57); } }
             }
 
             // Row 4: LSHIFT(58) + Z../(68) + RSHIFT(69) + UP(71) + END(70)
@@ -184,33 +190,33 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "SHIFT"; key-width: 76px; led-color: root.resolved-color(58); has-led: root.key-active(58); clicked => { root.key-clicked(58); } }
+                Keycap { label: "SHIFT"; key-width: 76px; led-color: root.resolved-color(58); has-led: root.key-active(58); is-selected: root.selected-key-idx == 58; is-remapped: root.key-remapped(58); clicked => { root.key-clicked(58); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "Z"; key-width: 32px; led-color: root.resolved-color(59); has-led: root.key-active(59); clicked => { root.key-clicked(59); } }
+                Keycap { label: "Z"; key-width: 32px; led-color: root.resolved-color(59); has-led: root.key-active(59); is-selected: root.selected-key-idx == 59; is-remapped: root.key-remapped(59); clicked => { root.key-clicked(59); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "X"; key-width: 32px; led-color: root.resolved-color(60); has-led: root.key-active(60); clicked => { root.key-clicked(60); } }
+                Keycap { label: "X"; key-width: 32px; led-color: root.resolved-color(60); has-led: root.key-active(60); is-selected: root.selected-key-idx == 60; is-remapped: root.key-remapped(60); clicked => { root.key-clicked(60); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "C"; key-width: 32px; led-color: root.resolved-color(61); has-led: root.key-active(61); clicked => { root.key-clicked(61); } }
+                Keycap { label: "C"; key-width: 32px; led-color: root.resolved-color(61); has-led: root.key-active(61); is-selected: root.selected-key-idx == 61; is-remapped: root.key-remapped(61); clicked => { root.key-clicked(61); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "V"; key-width: 32px; led-color: root.resolved-color(62); has-led: root.key-active(62); clicked => { root.key-clicked(62); } }
+                Keycap { label: "V"; key-width: 32px; led-color: root.resolved-color(62); has-led: root.key-active(62); is-selected: root.selected-key-idx == 62; is-remapped: root.key-remapped(62); clicked => { root.key-clicked(62); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "B"; key-width: 32px; led-color: root.resolved-color(63); has-led: root.key-active(63); clicked => { root.key-clicked(63); } }
+                Keycap { label: "B"; key-width: 32px; led-color: root.resolved-color(63); has-led: root.key-active(63); is-selected: root.selected-key-idx == 63; is-remapped: root.key-remapped(63); clicked => { root.key-clicked(63); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "N"; key-width: 32px; led-color: root.resolved-color(64); has-led: root.key-active(64); clicked => { root.key-clicked(64); } }
+                Keycap { label: "N"; key-width: 32px; led-color: root.resolved-color(64); has-led: root.key-active(64); is-selected: root.selected-key-idx == 64; is-remapped: root.key-remapped(64); clicked => { root.key-clicked(64); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "M"; key-width: 32px; led-color: root.resolved-color(65); has-led: root.key-active(65); clicked => { root.key-clicked(65); } }
+                Keycap { label: "M"; key-width: 32px; led-color: root.resolved-color(65); has-led: root.key-active(65); is-selected: root.selected-key-idx == 65; is-remapped: root.key-remapped(65); clicked => { root.key-clicked(65); } }
                 Rectangle { width: 4px; }
-                Keycap { label: ","; key-width: 32px; led-color: root.resolved-color(66); has-led: root.key-active(66); clicked => { root.key-clicked(66); } }
+                Keycap { label: ","; key-width: 32px; led-color: root.resolved-color(66); has-led: root.key-active(66); is-selected: root.selected-key-idx == 66; is-remapped: root.key-remapped(66); clicked => { root.key-clicked(66); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "."; key-width: 32px; led-color: root.resolved-color(67); has-led: root.key-active(67); clicked => { root.key-clicked(67); } }
+                Keycap { label: "."; key-width: 32px; led-color: root.resolved-color(67); has-led: root.key-active(67); is-selected: root.selected-key-idx == 67; is-remapped: root.key-remapped(67); clicked => { root.key-clicked(67); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "/"; key-width: 32px; led-color: root.resolved-color(68); has-led: root.key-active(68); clicked => { root.key-clicked(68); } }
+                Keycap { label: "/"; key-width: 32px; led-color: root.resolved-color(68); has-led: root.key-active(68); is-selected: root.selected-key-idx == 68; is-remapped: root.key-remapped(68); clicked => { root.key-clicked(68); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "SHIFT"; key-width: 60px; led-color: root.resolved-color(69); has-led: root.key-active(69); clicked => { root.key-clicked(69); } }
+                Keycap { label: "SHIFT"; key-width: 60px; led-color: root.resolved-color(69); has-led: root.key-active(69); is-selected: root.selected-key-idx == 69; is-remapped: root.key-remapped(69); clicked => { root.key-clicked(69); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "▲"; key-width: 32px; led-color: root.resolved-color(71); has-led: root.key-active(71); clicked => { root.key-clicked(71); } }
+                Keycap { label: "▲"; key-width: 32px; led-color: root.resolved-color(71); has-led: root.key-active(71); is-selected: root.selected-key-idx == 71; is-remapped: root.key-remapped(71); clicked => { root.key-clicked(71); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "END"; key-width: 32px; led-color: root.resolved-color(70); has-led: root.key-active(70); clicked => { root.key-clicked(70); } }
+                Keycap { label: "END"; key-width: 32px; led-color: root.resolved-color(70); has-led: root.key-active(70); is-selected: root.selected-key-idx == 70; is-remapped: root.key-remapped(70); clicked => { root.key-clicked(70); } }
             }
 
             // Row 5: LCTRL(72)..RIGHT(81)
@@ -218,25 +224,25 @@ export component KeyboardView inherits Rectangle {
                 spacing: 0px;
                 alignment: start;
 
-                Keycap { label: "CTRL"; key-width: 41px; led-color: root.resolved-color(72); has-led: root.key-active(72); clicked => { root.key-clicked(72); } }
+                Keycap { label: "CTRL"; key-width: 41px; led-color: root.resolved-color(72); has-led: root.key-active(72); is-selected: root.selected-key-idx == 72; is-remapped: root.key-remapped(72); clicked => { root.key-clicked(72); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "WIN"; key-width: 41px; led-color: root.resolved-color(73); has-led: root.key-active(73); clicked => { root.key-clicked(73); } }
+                Keycap { label: "WIN"; key-width: 41px; led-color: root.resolved-color(73); has-led: root.key-active(73); is-selected: root.selected-key-idx == 73; is-remapped: root.key-remapped(73); clicked => { root.key-clicked(73); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "ALT"; key-width: 41px; led-color: root.resolved-color(74); has-led: root.key-active(74); clicked => { root.key-clicked(74); } }
+                Keycap { label: "ALT"; key-width: 41px; led-color: root.resolved-color(74); has-led: root.key-active(74); is-selected: root.selected-key-idx == 74; is-remapped: root.key-remapped(74); clicked => { root.key-clicked(74); } }
                 Rectangle { width: 4px; }
-                Keycap { label: ""; key-width: 225px; led-color: root.resolved-color(75); has-led: root.key-active(75); clicked => { root.key-clicked(75); } }
+                Keycap { label: ""; key-width: 225px; led-color: root.resolved-color(75); has-led: root.key-active(75); is-selected: root.selected-key-idx == 75; is-remapped: root.key-remapped(75); clicked => { root.key-clicked(75); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "ALT"; key-width: 32px; led-color: root.resolved-color(76); has-led: root.key-active(76); clicked => { root.key-clicked(76); } }
+                Keycap { label: "ALT"; key-width: 32px; led-color: root.resolved-color(76); has-led: root.key-active(76); is-selected: root.selected-key-idx == 76; is-remapped: root.key-remapped(76); clicked => { root.key-clicked(76); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "FN"; key-width: 32px; led-color: root.resolved-color(77); has-led: root.key-active(77); clicked => { root.key-clicked(77); } }
+                Keycap { label: "FN"; key-width: 32px; led-color: root.resolved-color(77); has-led: root.key-active(77); is-selected: root.selected-key-idx == 77; is-remapped: root.key-remapped(77); clicked => { root.key-clicked(77); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "CTRL"; key-width: 32px; led-color: root.resolved-color(78); has-led: root.key-active(78); clicked => { root.key-clicked(78); } }
+                Keycap { label: "CTRL"; key-width: 32px; led-color: root.resolved-color(78); has-led: root.key-active(78); is-selected: root.selected-key-idx == 78; is-remapped: root.key-remapped(78); clicked => { root.key-clicked(78); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "◄"; key-width: 32px; led-color: root.resolved-color(79); has-led: root.key-active(79); clicked => { root.key-clicked(79); } }
+                Keycap { label: "◄"; key-width: 32px; led-color: root.resolved-color(79); has-led: root.key-active(79); is-selected: root.selected-key-idx == 79; is-remapped: root.key-remapped(79); clicked => { root.key-clicked(79); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "▼"; key-width: 32px; led-color: root.resolved-color(80); has-led: root.key-active(80); clicked => { root.key-clicked(80); } }
+                Keycap { label: "▼"; key-width: 32px; led-color: root.resolved-color(80); has-led: root.key-active(80); is-selected: root.selected-key-idx == 80; is-remapped: root.key-remapped(80); clicked => { root.key-clicked(80); } }
                 Rectangle { width: 4px; }
-                Keycap { label: "►"; key-width: 32px; led-color: root.resolved-color(81); has-led: root.key-active(81); clicked => { root.key-clicked(81); } }
+                Keycap { label: "►"; key-width: 32px; led-color: root.resolved-color(81); has-led: root.key-active(81); is-selected: root.selected-key-idx == 81; is-remapped: root.key-remapped(81); clicked => { root.key-clicked(81); } }
             }
         }
     }

@@ -74,6 +74,24 @@ async fn run_ipc_server(
     Ok(())
 }
 
+async fn dispatch_unit_command(
+    cmd_tx: &mpsc::Sender<DeviceCommand>,
+    make_cmd: impl FnOnce(tokio::sync::oneshot::Sender<Result<(), String>>) -> DeviceCommand,
+    ok_msg: &str,
+) -> IpcResponse {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let _ = cmd_tx.send(make_cmd(reply_tx)).await;
+    match reply_rx.await {
+        Ok(Ok(())) => IpcResponse::Ok {
+            message: ok_msg.to_string(),
+        },
+        Ok(Err(err)) => IpcResponse::Error { error: err },
+        Err(_) => IpcResponse::Error {
+            error: "Falha interna no subsistema de hardware".into(),
+        },
+    }
+}
+
 async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand>) {
     let (reader, mut writer) = tokio::io::split(pipe);
     let mut lines = BufReader::new(reader).lines();
@@ -149,6 +167,57 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                         error: "Falha interna ao selecionar banco Custom".into(),
                     },
                 }
+            }
+            Ok(IpcRequest::SetSystemStages { system }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetSystemStages(system, tx),
+                    "Configurações de sistema aplicadas com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::SetKeyAssignment {
+                phys_led,
+                assignment,
+            }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetKeyAssignment(phys_led, assignment, tx),
+                    "Mapeamento de tecla atualizado com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::ResetKeymap) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::ResetKeymap,
+                    "Mapeamento restaurado para padrão de fábrica",
+                )
+                .await
+            }
+            Ok(IpcRequest::UpsertMacro { macro_def }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::UpsertMacro(macro_def, tx),
+                    "Macro salva com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::DeleteMacro { id }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::DeleteMacro(id, tx),
+                    "Macro removida com sucesso",
+                )
+                .await
+            }
+            Ok(IpcRequest::SyncFromDevice) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::SyncFromDevice,
+                    "Perfil sincronizado a partir do teclado",
+                )
+                .await
             }
             Ok(IpcRequest::PlayGif { path, fps }) => {
                 let (reply_tx, reply_rx) = oneshot::channel();
