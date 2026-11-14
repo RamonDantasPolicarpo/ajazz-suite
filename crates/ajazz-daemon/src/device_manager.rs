@@ -3,6 +3,10 @@ use crate::gif_decoder::decode_gif_to_matrix_frames;
 use crate::profile_store::{load_profile, save_profile};
 use crate::screen_capture::ScreenCapturer;
 use ajazz_protocol::hidapi;
+use ajazz_protocol::mouse::{
+    Aj179MouseDevice, MouseAsyncEvent, MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus,
+    MOUSE_BUTTON_COUNT,
+};
 use ajazz_protocol::{
     Ak820Device, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
     SystemStages, UserProfile, PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
@@ -45,6 +49,12 @@ pub enum DeviceCommand {
     CaptureFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     AudioFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     GetStatus(oneshot::Sender<DeviceStatus>),
+    GetMouseStatus(oneshot::Sender<(bool, Option<MouseStatus>, MouseProfile)>),
+    SetMouseConfig(MouseConfig, oneshot::Sender<Result<(), String>>),
+    SetMouseButton(u8, MouseButtonSlot, oneshot::Sender<Result<(), String>>),
+    ResetMouseButtons(oneshot::Sender<Result<(), String>>),
+    SyncMouseFromDevice(oneshot::Sender<Result<(), String>>),
+    StartMousePairing(oneshot::Sender<Result<(), String>>),
 }
 
 fn cancel_active_streams(
@@ -161,17 +171,29 @@ pub async fn run_device_actor(
 
     let mut hid_api = hidapi::HidApi::new().ok();
     let mut device: Option<Ak820Device> = None;
+    let mut mouse_dev: Option<Aj179MouseDevice> = None;
+    let mut mouse_status: Option<MouseStatus> = None;
     let mut profile = load_profile();
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
     let mut pre_gif_lighting: Option<LightingConfig> = None;
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
     let mut audio_stop: Option<Arc<AtomicBool>> = None;
 
-    // Tenta conexão inicial
+    // Tenta conexão inicial (Teclado AK820 e Mouse AJ179 NL P)
     if let Some(ref api) = hid_api {
         if let Ok(dev) = Ak820Device::open(api) {
             info!("Teclado AK820 conectado com sucesso na inicialização.");
             device = Some(dev);
+        }
+        if let Ok(mut mdev) = Aj179MouseDevice::open(api) {
+            info!(
+                "Mouse AJ179 NL P conectado ({:?}) na inicialização.",
+                mdev.connection_mode()
+            );
+            if let Ok(st) = mdev.read_status() {
+                mouse_status = Some(st);
+            }
+            mouse_dev = Some(mdev);
         }
     }
 
@@ -577,6 +599,63 @@ pub async fn run_device_actor(
                 };
                 let _ = resp.send(status);
             }
+
+            DeviceCommand::GetMouseStatus(resp) => {
+                poll_or_connect_mouse(&mut mouse_dev, &mut mouse_status, &mut hid_api, &mut profile);
+                let _ = resp.send((
+                    mouse_dev.is_some(),
+                    mouse_status.clone(),
+                    profile.mouse.clone(),
+                ));
+            }
+
+            DeviceCommand::SetMouseConfig(mut cfg, resp) => {
+                cfg.normalize();
+                let res = apply_mouse_config_command(
+                    &mut mouse_dev,
+                    &mut mouse_status,
+                    &mut hid_api,
+                    &mut profile,
+                    cfg,
+                );
+                let _ = resp.send(res);
+            }
+
+            DeviceCommand::SetMouseButton(slot, assignment, resp) => {
+                let res = apply_mouse_button_command(
+                    &mut mouse_dev,
+                    &mut mouse_status,
+                    &mut hid_api,
+                    &mut profile,
+                    slot,
+                    assignment,
+                );
+                let _ = resp.send(res);
+            }
+
+            DeviceCommand::ResetMouseButtons(resp) => {
+                let res = apply_mouse_reset_buttons_command(
+                    &mut mouse_dev,
+                    &mut hid_api,
+                    &mut profile,
+                );
+                let _ = resp.send(res);
+            }
+
+            DeviceCommand::SyncMouseFromDevice(resp) => {
+                let res = sync_mouse_from_device_command(
+                    &mut mouse_dev,
+                    &mut mouse_status,
+                    &mut hid_api,
+                    &mut profile,
+                );
+                let _ = resp.send(res);
+            }
+
+            DeviceCommand::StartMousePairing(resp) => {
+                let res = start_mouse_pairing_command(&mut mouse_dev, &mut mouse_status, &mut hid_api);
+                let _ = resp.send(res);
+            }
         }
     }
 }
@@ -742,6 +821,271 @@ fn ensure_connected<'a>(
     device
         .as_mut()
         .ok_or_else(|| "Dispositivo não disponível".to_string())
+}
+
+fn ensure_mouse_connected<'a>(
+    mouse_dev: &'a mut Option<Aj179MouseDevice>,
+    hid_api: &mut Option<hidapi::HidApi>,
+) -> Result<&'a mut Aj179MouseDevice, String> {
+    if mouse_dev.is_none() {
+        if hid_api.is_none() {
+            *hid_api = hidapi::HidApi::new().ok();
+        }
+        if let Some(ref mut api) = hid_api {
+            let _ = api.refresh_devices();
+            match Aj179MouseDevice::open(api) {
+                Ok(new_dev) => {
+                    info!("Mouse AJ179 NL P conectado ({:?}).", new_dev.connection_mode());
+                    *mouse_dev = Some(new_dev);
+                }
+                Err(_) => {
+                    return Err(
+                        "Mouse AJ179 NL P não encontrado (UsagePage 0xFFB2). Verifique o cabo ou receptor 2.4G."
+                            .to_string(),
+                    );
+                }
+            }
+        } else {
+            return Err("Falha ao inicializar subsistema HID do sistema.".to_string());
+        }
+    }
+    mouse_dev
+        .as_mut()
+        .ok_or_else(|| "Mouse não disponível".to_string())
+}
+
+fn poll_or_connect_mouse(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+) {
+    if mouse_dev.is_none() && ensure_mouse_connected(mouse_dev, hid_api).is_err() {
+        *mouse_status = None;
+        return;
+    }
+
+    let mut need_resync = mouse_status.is_none();
+    if let Some(ref mut dev) = mouse_dev {
+        for _ in 0..8 {
+            match dev.poll_notification(0) {
+                Ok(Some(MouseAsyncEvent::Reconnect)) => need_resync = true,
+                Ok(Some(MouseAsyncEvent::DpiStageChanged { index })) => {
+                    if let Some(ref mut st) = mouse_status {
+                        st.config.dpi_index = index.min(st.config.dpi_count.saturating_sub(1));
+                    }
+                    profile.mouse.config.dpi_index =
+                        index.min(profile.mouse.config.dpi_count.saturating_sub(1));
+                }
+                Ok(Some(MouseAsyncEvent::BatteryUpdated {
+                    charging,
+                    battery_percent,
+                })) => {
+                    if let Some(ref mut st) = mouse_status {
+                        st.charging = charging;
+                        st.battery_percent = battery_percent;
+                    }
+                }
+                Ok(Some(MouseAsyncEvent::Special { .. })) => {}
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Mouse desconectado ao ler notificações: {e}");
+                    *mouse_dev = None;
+                    *mouse_status = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    if need_resync {
+        if let Some(ref mut dev) = mouse_dev {
+            match dev.read_status() {
+                Ok(st) => *mouse_status = Some(st),
+                Err(e) => {
+                    warn!("Falha ao consultar status 06 05 do mouse: {e}");
+                    *mouse_dev = None;
+                    *mouse_status = None;
+                }
+            }
+        }
+    }
+}
+
+fn sync_mouse_from_device_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+) -> Result<(), String> {
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    match dev.read_status() {
+        Ok(st) => {
+            profile.mouse.config = st.config.clone();
+            profile.normalize();
+            save_profile(profile);
+            *mouse_status = Some(st);
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao sincronizar mouse (desconexão a quente?): {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            Err(format!("Erro ao ler estado do mouse: {e}"))
+        }
+    }
+}
+
+fn apply_mouse_config_diff(
+    dev: &mut Aj179MouseDevice,
+    prev: Option<&MouseConfig>,
+    next: &MouseConfig,
+) -> Result<(), ajazz_protocol::ProtocolError> {
+    let dpi_changed = prev.is_none_or(|p| {
+        p.dpi_count != next.dpi_count
+            || p.dpi_index != next.dpi_index
+            || p.dpi_stages != next.dpi_stages
+    });
+    if dpi_changed {
+        let mut active_sent = false;
+        for idx in 0..(next.dpi_count as usize) {
+            let changed_slot = prev.is_none_or(|p| {
+                p.dpi_stages[idx] != next.dpi_stages[idx] || p.dpi_count != next.dpi_count
+            });
+            if changed_slot {
+                dev.set_dpi_stage(next.dpi_count, idx as u8, next.dpi_stages[idx])?;
+                if idx as u8 == next.dpi_index {
+                    active_sent = true;
+                }
+            }
+        }
+        if !active_sent || prev.is_none_or(|p| p.dpi_index != next.dpi_index) {
+            dev.set_dpi_stage(
+                next.dpi_count,
+                next.dpi_index,
+                next.dpi_stages[next.dpi_index as usize],
+            )?;
+        }
+    }
+
+    if prev.is_none_or(|p| p.polling_rate != next.polling_rate) {
+        dev.set_polling_rate(next.polling_rate)?;
+    }
+    if prev.is_none_or(|p| p.scroll_direction != next.scroll_direction) {
+        dev.set_scroll_direction(next.scroll_direction)?;
+    }
+    if prev.is_none_or(|p| p.lod != next.lod) {
+        dev.set_lod(next.lod)?;
+    }
+    if prev.is_none_or(|p| p.sensor != next.sensor) {
+        dev.set_sensor_flags(next.sensor)?;
+    }
+    if prev.is_none_or(|p| p.highspeed_mode != next.highspeed_mode) {
+        dev.set_highspeed_mode(next.highspeed_mode)?;
+    }
+    if prev.is_none_or(|p| p.debounce_ms != next.debounce_ms) {
+        dev.set_debounce_ms(next.debounce_ms)?;
+    }
+    if prev.is_none_or(|p| p.light_sleep != next.light_sleep || p.deep_sleep != next.deep_sleep) {
+        dev.set_sleep_timers(next.light_sleep, next.deep_sleep)?;
+    }
+    Ok(())
+}
+
+fn apply_mouse_config_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+    next: MouseConfig,
+) -> Result<(), String> {
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    let prev = mouse_status.as_ref().map(|s| &s.config);
+    match apply_mouse_config_diff(dev, prev, &next) {
+        Ok(()) => {
+            profile.mouse.config = next;
+            profile.normalize();
+            save_profile(profile);
+            if let Ok(st) = dev.read_status() {
+                *mouse_status = Some(st);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao aplicar configuração no mouse (desconexão?): {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            Err(format!("Erro de comunicação USB com o mouse: {e}"))
+        }
+    }
+}
+
+fn apply_mouse_button_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+    slot: u8,
+    assignment: MouseButtonSlot,
+) -> Result<(), String> {
+    if (slot as usize) >= MOUSE_BUTTON_COUNT {
+        return Err(format!("Botão inválido: {slot}"));
+    }
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    let mut updated = profile.mouse.buttons.clone();
+    updated[slot as usize] = assignment;
+    match dev.set_keymap(&updated) {
+        Ok(()) => {
+            profile.mouse.buttons = updated;
+            save_profile(profile);
+            let _ = mouse_status;
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao atualizar botão do mouse: {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            Err(format!("Erro de comunicação USB com o mouse: {e}"))
+        }
+    }
+}
+
+fn apply_mouse_reset_buttons_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+) -> Result<(), String> {
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    let defaults = MouseButtonSlot::DEFAULT_FIVE;
+    match dev.set_keymap(&defaults) {
+        Ok(()) => {
+            profile.mouse.buttons = defaults;
+            save_profile(profile);
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao restaurar botões do mouse: {e}");
+            *mouse_dev = None;
+            Err(format!("Erro de comunicação USB com o mouse: {e}"))
+        }
+    }
+}
+
+fn start_mouse_pairing_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+) -> Result<(), String> {
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    match dev.start_pairing() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            warn!("Erro ao iniciar pareamento NearLink: {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            Err(format!("Erro de comunicação USB com o mouse: {e}"))
+        }
+    }
 }
 
 #[cfg(test)]

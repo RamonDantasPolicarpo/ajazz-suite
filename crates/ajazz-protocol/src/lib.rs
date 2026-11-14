@@ -493,6 +493,9 @@ pub struct UserProfile {
     /// Macros definidas pelo usuário.
     #[serde(default)]
     pub macros: Vec<MacroDefinition>,
+    /// Perfil persistido do mouse AJ179 NL P.
+    #[serde(default)]
+    pub mouse: MouseProfile,
 }
 
 impl Default for UserProfile {
@@ -504,6 +507,7 @@ impl Default for UserProfile {
             system: SystemStages::default(),
             keymap: BTreeMap::new(),
             macros: Vec::new(),
+            mouse: MouseProfile::default(),
         }
     }
 }
@@ -512,6 +516,7 @@ impl UserProfile {
     /// Normaliza os vetores dos bancos Custom para exatamente `TOTAL_PHYSICAL_LEDS`.
     pub fn normalize(&mut self) {
         self.lighting.normalize();
+        self.mouse.config.normalize();
         for bank in &mut self.custom_banks {
             bank.resize(TOTAL_PHYSICAL_LEDS, RgbColor::default());
         }
