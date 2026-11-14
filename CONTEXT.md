@@ -4,7 +4,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Audio Sync (`0x1D -> 0xFE`) e GIF Player Volátil (`0x12`) Implementados
+## 1. Posição Atual: Audio Sync (`0x1D -> 0xFE`) e GIF Player Volátil (`0x12`) VALIDADOS EM HARDWARE
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -18,7 +18,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - **Interface Gráfica Nativa (`ajazz-gui`):**
   - Sub-abas em `AK820 RGB` (`Iluminação`, `Remapear Teclas`, `Macros`, `Sistema`) mantendo o teclado 82 teclas fixo no topo (`980x680` travado) com destaque de seleção e ponto indicador de remapeamento.
   - Modo `Audio` na 21ª vaga da grade `7×3` com linha contextual dos 7 estilos + toggle/cor de fundo, e barra compacta `GIF LIVE` (seletor nativo Windows `GetOpenFileNameW`, FPS `15/25/30` e `PLAY/PARAR GIF` sincronizado com o Daemon).
-- **Validação:** Suíte completa de testes unitários e integração verde nos 3 crates (`ajazz-protocol`, `ajazz-daemon`, `ajazz-gui`) e `cargo clippy --workspace --all-targets`; pendente smoke test físico de Audio Sync e GIF Player pelo usuário.
+- **Validação de Hardware Concluída:** `Audio Sync` (7 estilos + fundo) e `GIF Player (0x12)` aprovados pelo usuário no AK820 físico (paridade total do teclado concluída).
 
 ---
 
@@ -51,11 +51,14 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `5cac230`: `docs: align domain glossary, adr-0002 and lighting parity requirements`
 - `3c5ed87`: paridade completa do subsistema de iluminação AK820 (19 efeitos + Custom 3 bancos + Capture `0x12` + persistência JSON + GUI travada).
 - `ab78f2f`: `feat: implement AK820 SystemStages, keymap remapping and macro editor` (paridade completa do teclado AK820: iluminação + sistema + keymap + macros validados no hardware).
+- `e306074`: `feat: implement Audio Sync (0x1D) and volatile GIF Player (0x12)` (Audio Sync WASAPI 7 estilos + GIF Player em RAM volátil validados no hardware).
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. Smoke test físico pelo usuário do **Audio Sync** (7 estilos + fundo) e do **GIF Player (`0x12`)** no AK820.
-2. Adicionar simulação animada em tempo real dos efeitos RGB na própria **GUI** (`KeyboardView`).
-3. Escolher a próxima frente de expansão: engenharia reversa do **Mouse NearLink** (`0x7768:0x642E`) ou detector de **Switch Chattering** + filtros de diagnóstico.
+1. **Refinamentos do GIF Player (pós-consolidação)**: adicionar enquadramento/recorte (*crop* / *pan & zoom*) da região do GIF projetada na matriz e controle fino de velocidade/FPS mais baixos (ex.: respeitar delay nativo dos frames ou opções de 1–10 FPS / multiplicador).
+2. **Simulação Visual na GUI**: renderizar animação em tempo real dos efeitos RGB (incluindo Audio/GIF) no `KeyboardView` da GUI.
+3. **Expansão de Hardware e Diagnóstico**:
+   - Engenharia reversa do **Mouse NearLink** (`0x7768:0x642E`, endpoints `0xFFB1..0xFFB3`).
+   - Detector de **Switch Chattering** + filtros de diagnóstico.
