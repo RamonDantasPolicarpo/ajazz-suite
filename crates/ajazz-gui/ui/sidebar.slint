@@ -73,6 +73,7 @@ export component SidebarItem inherits Rectangle {
 export component Sidebar inherits Rectangle {
     in-out property <int> active-tab: 0;
     in property <bool> daemon-online: true;
+    in property <string> mouse-subtitle: "Desconectado";
 
     callback tab-changed(int);
 
@@ -151,8 +152,8 @@ export component Sidebar inherits Rectangle {
 
         SidebarItem {
             icon-text: "MS";
-            title: "NEARLINK MOUSE";
-            subtitle: "Wireless 4K";
+            title: "AJ179 NL P";
+            subtitle: root.mouse-subtitle;
             is-active: root.active-tab == 1;
             clicked => {
                 root.active-tab = 1;

@@ -1,149 +1,1282 @@
 import { Theme } from "theme.slint";
 
+component MousePill inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> highlight: false;
+    in property <length> pill-width: 72px;
+    in property <length> pill-height: 24px;
+    callback clicked();
+
+    width: root.pill-width;
+    height: root.pill-height;
+    border-radius: Theme.radius-sm;
+    background: !root.enabled
+        ? Theme.background
+        : (root.highlight ? #1F3A2A : (root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised)));
+    border-color: root.highlight && root.enabled
+        ? Theme.status-online
+        : (root.active && root.enabled ? Theme.border-light : Theme.border);
+    border-width: 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active || root.highlight ? 700 : 500;
+        color: root.highlight && root.enabled ? Theme.status-online : (root.active ? Theme.text-primary : Theme.text-secondary);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component MouseSubTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <length> tab-width: 136px;
+    callback clicked();
+
+    width: root.tab-width;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface);
+    border-color: root.active ? Theme.border-light : Theme.border;
+    border-width: 1px;
+
+    Text {
+        text: root.label;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component SchematicButton inherits Rectangle {
+    in property <int> slot-num;
+    in property <string> slot-name;
+    in property <string> binding-label;
+    in property <bool> selected: false;
+    callback clicked();
+
+    border-radius: Theme.radius-sm;
+    background: root.selected ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised);
+    border-color: root.selected ? Theme.text-primary : Theme.border-light;
+    border-width: root.selected ? 1.5px : 1px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        padding: 4px;
+
+        Text {
+            text: "[" + root.slot-num + "] " + root.slot-name;
+            font-family: Theme.mono-font;
+            font-size: 8px;
+            font-weight: 700;
+            color: Theme.text-muted;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.binding-label;
+            font-family: Theme.mono-font;
+            font-size: 9px;
+            font-weight: 700;
+            color: root.selected ? Theme.text-primary : Theme.text-secondary;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
 export component MouseView inherits Rectangle {
-    in property <int> battery-percent: 85;
-    in property <int> current-dpi: 1600;
-    in property <bool> is-left-clicked: false;
+    in property <bool> daemon-online: false;
+    in property <bool> ms-connected: false;
+    in property <bool> ms-online: false;
+    in property <bool> ms-charging: false;
+    in property <int> ms-battery-percent: 0;
+    in property <string> ms-conn-label: "OFFLINE";
+    in property <string> ms-fw-label: "VID 0x7768 • UsagePage 0xFFB2";
+    in property <string> ms-feedback-text: "";
+    in property <bool> ms-feedback-is-error: false;
+
+    in-out property <int> subtab: 0; // 0=Performance & Sensor, 1=Botões, 2=Energia & Conexão
+    in property <bool> dirty: false;
+
+    // Performance & Sensor
+    in property <int> dpi-count: 4;
+    in property <int> dpi-index: 1;
+    in property <[int]> dpi-values: [400, 800, 1600, 3200, 6400, 12800];
+    in property <[string]> dpi-texts: ["400", "800", "1600", "3200", "6400", "12800"];
+    in property <int> polling-idx: 3;
+    in property <int> lod-idx: 0;
+    in property <bool> motion-sync: true;
+    in property <bool> ripple-control: false;
+    in property <bool> linear-correction: false;
+    in property <bool> highspeed-mode: true;
+    in property <int> debounce-ms: 8;
+
+    // Energia & Conexão
+    in property <int> scroll-idx: 0;
+    in property <int> light-sleep: 60;
+    in property <int> deep-sleep: 300;
+    in property <string> light-sleep-label: "1 min";
+    in property <string> deep-sleep-label: "5 min";
+    property <bool> confirm-pairing: false;
+
+    // Botões (5 slots)
+    in property <[string]> button-labels: ["Clique Esq.", "Clique Dir.", "Botão Meio", "Avançar", "Voltar"];
+    in property <int> selected-slot: 0;
+    in property <string> slot-title: "[0] CLIQUE ESQUERDO";
+    in property <string> slot-current-binding: "Clique Esq.";
+    in-out property <int> btn-category: 0;
+    in-out property <int> btn-mouse-idx: 0;
+    in-out property <int> btn-mod-mask: 0;
+    in-out property <int> btn-key-idx: 0;
+    in-out property <int> btn-media-idx: 0;
+    in-out property <int> btn-sniper-idx: 0;
+    in-out property <bool> btn-capturing-key: false;
+    in property <bool> btn-left-warning: false;
+    in property <[string]> key-catalog-labels: [];
+    in property <[string]> media-labels: [];
+
+    // Callbacks Performance & Sensor + Gerais
+    callback dpi-count-changed(int);
+    callback dpi-stage-selected(int);
+    callback dpi-step(int, int);
+    callback dpi-text-edited(int, string);
+    callback dpi-text-committed(int, string);
+    callback polling-selected(int);
+    callback lod-selected(int);
+    callback sensor-toggled(int);
+    callback highspeed-toggled();
+    callback debounce-step(int);
+    callback debounce-set(int);
+    callback scroll-selected(int);
+    callback light-sleep-selected(int);
+    callback deep-sleep-selected(int);
+    callback apply-config-clicked();
+    callback sync-clicked();
+    callback start-pairing-clicked();
+
+    // Callbacks Botões
+    callback slot-selected(int);
+    callback btn-category-selected(int);
+    callback btn-mouse-selected(int);
+    callback btn-toggle-modifier(int);
+    callback btn-catalog-key-selected(int);
+    callback btn-capture-key(string, bool, bool, bool, bool);
+    callback btn-media-selected(int);
+    callback btn-sniper-selected(int);
+    callback apply-button-clicked();
+    callback reset-buttons-clicked();
 
     background: Theme.background;
 
     VerticalLayout {
-        padding: 24px;
-        spacing: 16px;
+        padding: 14px;
+        spacing: 8px;
         alignment: start;
 
-        Text {
-            text: "AJAZZ NEARLINK MOUSE";
-            font-family: Theme.mono-font;
-            font-size: 14px;
-            font-weight: 700;
-            color: Theme.text-primary;
-        }
-
-        Text {
-            text: "Telemetria sem fio, estágios de DPI e diagnóstico de micro-switch.";
-            font-family: Theme.mono-font;
-            font-size: 10px;
-            color: Theme.text-secondary;
-        }
-
-        Rectangle { height: 8px; }
-
-        // Grid de Cards
+        // Cabeçalho & Telemetria ao vivo
         HorizontalLayout {
-            spacing: 16px;
+            width: 720px;
+            alignment: space-between;
 
-            // Card 1: Bateria
+            VerticalLayout {
+                spacing: 2px;
+                alignment: center;
+                Text {
+                    text: "AJAZZ AJ179 NL P NEARLINK";
+                    font-family: Theme.mono-font;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+                Text {
+                    text: root.ms-feedback-text != "" ? root.ms-feedback-text : root.ms-fw-label;
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    color: root.ms-feedback-is-error
+                        ? Theme.status-error
+                        : (root.ms-feedback-text != "" ? Theme.status-online : Theme.text-secondary);
+                }
+            }
+
+            // Badge de Conexão + Bateria
             Rectangle {
-                width: 280px;
-                height: 140px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: Theme.surface;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    alignment: center;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: !root.daemon-online
+                                ? Theme.status-error
+                                : (root.ms-connected && root.ms-online ? Theme.status-online : Theme.status-warning);
+                        }
+                    }
+
+                    Text {
+                        text: root.daemon-online ? root.ms-conn-label : "DAEMON OFF";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+
+                    if (root.ms-connected) : HorizontalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "•";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 8px;
+                                border-radius: 2px;
+                                background: Theme.surface-raised;
+                                border-color: Theme.border-light;
+                                border-width: 1px;
+
+                                Rectangle {
+                                    x: 1px;
+                                    y: 1px;
+                                    height: 6px;
+                                    width: 26px * (clamp(root.ms-battery-percent, 0, 100) / 100.0);
+                                    border-radius: 1px;
+                                    background: root.ms-battery-percent > 20 ? Theme.status-online : Theme.status-error;
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.ms-charging
+                                ? root.ms-battery-percent + "% (CARREG.)"
+                                : root.ms-battery-percent + "%";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sub-abas + Ações Globais (Sincronizar / Aplicar no Mouse)
+        HorizontalLayout {
+            width: 720px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 6px;
+                MouseSubTab { label: "PERFORMANCE & SENSOR"; tab-width: 148px; active: root.subtab == 0; clicked => { root.subtab = 0; } }
+                MouseSubTab { label: "BOTÕES (5)"; tab-width: 100px; active: root.subtab == 1; clicked => { root.subtab = 1; } }
+                MouseSubTab { label: "ENERGIA & CONEXÃO"; tab-width: 136px; active: root.subtab == 2; clicked => { root.subtab = 2; } }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                MousePill {
+                    text: "SINCRONIZAR";
+                    pill-width: 96px;
+                    enabled: root.ms-connected;
+                    clicked => { root.sync-clicked(); }
+                }
+                MousePill {
+                    text: root.dirty ? "* APLICAR NO MOUSE" : "APLICAR NO MOUSE";
+                    pill-width: 134px;
+                    enabled: root.ms-connected;
+                    highlight: root.dirty;
+                    clicked => { root.apply-config-clicked(); }
+                }
+            }
+        }
+
+        // ============================================================
+        // SUB-ABA 0: PERFORMANCE & SENSOR
+        // ============================================================
+        if (root.subtab == 0) : VerticalLayout {
+            spacing: 10px;
+            width: 720px;
+
+            // Card 1: Estágios de DPI (6 slots, 50..26000)
+            Rectangle {
+                width: 720px;
+                height: 238px;
                 background: Theme.surface;
                 border-radius: Theme.radius-lg;
                 border-color: Theme.border;
                 border-width: 1px;
 
                 VerticalLayout {
-                    padding: 16px;
-                    spacing: 10px;
-
-                    Text {
-                        text: "TELEMETRIA DE BATERIA";
-                        font-family: Theme.mono-font;
-                        font-size: 10px;
-                        font-weight: 700;
-                        color: Theme.text-muted;
-                    }
+                    padding: 12px;
+                    spacing: 7px;
 
                     HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-
+                        alignment: space-between;
                         Text {
-                            text: root.battery-percent + "%";
-                            font-family: Theme.mono-font;
-                            font-size: 32px;
-                            font-weight: 800;
-                            color: Theme.text-primary;
-                        }
-
-                        Text {
-                            text: "RESTANTE";
+                            text: "ESTÁGIOS DE DPI (50 - 26.000, PASSO 50)";
                             font-family: Theme.mono-font;
                             font-size: 9px;
+                            font-weight: 700;
                             color: Theme.text-muted;
-                            vertical-alignment: bottom;
+                            vertical-alignment: center;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "Estágios ativos:";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            for cnt in 6 : MousePill {
+                                text: "" + (cnt + 1);
+                                pill-width: 24px;
+                                pill-height: 20px;
+                                active: root.dpi-count == (cnt + 1);
+                                clicked => { root.dpi-count-changed(cnt + 1); }
+                            }
                         }
                     }
 
-                    // Barra de progresso da bateria
-                    Rectangle {
-                        height: 8px;
-                        border-radius: 4px;
-                        background: Theme.surface-raised;
-                        border-color: Theme.border;
-                        border-width: 1px;
+                    for idx in 6 : HorizontalLayout {
+                        height: 28px;
+                        spacing: 8px;
+                        opacity: idx < root.dpi-count ? 1.0 : 0.35;
 
+                        // Botão seletor de estágio ativo
+                        MousePill {
+                            text: "S" + (idx + 1);
+                            pill-width: 42px;
+                            pill-height: 24px;
+                            enabled: idx < root.dpi-count;
+                            active: root.dpi-index == idx;
+                            highlight: root.dpi-index == idx;
+                            clicked => { root.dpi-stage-selected(idx); }
+                        }
+
+                        // Barra visual do nível de DPI
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 320px;
+                                height: 10px;
+                                border-radius: 3px;
+                                background: Theme.background;
+                                border-color: root.dpi-index == idx ? Theme.border-light : Theme.border;
+                                border-width: 1px;
+
+                                property <int> cur-dpi: idx < root.dpi-values.length ? root.dpi-values[idx] : 800;
+
+                                Rectangle {
+                                    x: 1px;
+                                    y: 1px;
+                                    height: 8px;
+                                    width: 318px * clamp((cur-dpi * 1.0) / 26000.0, 0.02, 1.0);
+                                    border-radius: 2px;
+                                    background: root.dpi-index == idx ? Theme.status-online : Theme.text-secondary;
+                                }
+                            }
+                        }
+
+                        MousePill {
+                            text: "-500";
+                            pill-width: 40px;
+                            pill-height: 22px;
+                            enabled: idx < root.dpi-count;
+                            clicked => { root.dpi-step(idx, -500); }
+                        }
+                        MousePill {
+                            text: "-50";
+                            pill-width: 36px;
+                            pill-height: 22px;
+                            enabled: idx < root.dpi-count;
+                            clicked => { root.dpi-step(idx, -50); }
+                        }
+
+                        // Caixa numérica editável
                         Rectangle {
-                            width: (parent.width - 2px) * (root.battery-percent / 100);
-                            height: parent.height - 2px;
-                            x: 1px;
-                            y: 1px;
-                            border-radius: 3px;
-                            background: root.battery-percent > 20 ? Theme.status-online : Theme.status-error;
+                            width: 64px;
+                            height: 22px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.background;
+                            border-color: root.dpi-index == idx ? Theme.border-light : Theme.border;
+                            border-width: 1px;
+
+                            TextInput {
+                                width: 56px;
+                                x: 4px;
+                                y: 4px;
+                                text: idx < root.dpi-texts.length ? root.dpi-texts[idx] : "800";
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                                horizontal-alignment: center;
+                                enabled: idx < root.dpi-count;
+                                edited => { root.dpi-text-edited(idx, self.text); }
+                                accepted => { root.dpi-text-committed(idx, self.text); }
+                            }
+                        }
+
+                        MousePill {
+                            text: "+50";
+                            pill-width: 36px;
+                            pill-height: 22px;
+                            enabled: idx < root.dpi-count;
+                            clicked => { root.dpi-step(idx, 50); }
+                        }
+                        MousePill {
+                            text: "+500";
+                            pill-width: 40px;
+                            pill-height: 22px;
+                            enabled: idx < root.dpi-count;
+                            clicked => { root.dpi-step(idx, 500); }
+                        }
+
+                        Text {
+                            text: root.dpi-index == idx ? "ATIVO" : (idx < root.dpi-count ? "" : "INATIVO");
+                            font-family: Theme.mono-font;
+                            font-size: 8px;
+                            font-weight: 700;
+                            color: root.dpi-index == idx ? Theme.status-online : Theme.text-muted;
+                            vertical-alignment: center;
                         }
                     }
                 }
             }
 
-            // Card 2: Diagnóstico do Botão Esquerdo (Clique Preso)
+            // Card 2: Polling Rate, LOD, Sensor & Debounce
             Rectangle {
-                width: 320px;
-                height: 140px;
+                width: 720px;
+                height: 214px;
                 background: Theme.surface;
                 border-radius: Theme.radius-lg;
                 border-color: Theme.border;
                 border-width: 1px;
 
                 VerticalLayout {
-                    padding: 16px;
+                    padding: 14px;
+                    spacing: 12px;
+
+                    // Linha 1: Polling Rate + LOD
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "TAXA DE POLLING (HZ)";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                MousePill { text: "125 Hz"; pill-width: 68px; active: root.polling-idx == 0; clicked => { root.polling-selected(0); } }
+                                MousePill { text: "250 Hz"; pill-width: 68px; active: root.polling-idx == 1; clicked => { root.polling-selected(1); } }
+                                MousePill { text: "500 Hz"; pill-width: 68px; active: root.polling-idx == 2; clicked => { root.polling-selected(2); } }
+                                MousePill { text: "1000 Hz"; pill-width: 72px; active: root.polling-idx == 3; clicked => { root.polling-selected(3); } }
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "LIFT-OFF DISTANCE (LOD)";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                MousePill { text: "1 mm (Baixo)"; pill-width: 96px; active: root.lod-idx == 0; clicked => { root.lod-selected(0); } }
+                                MousePill { text: "2 mm (Alto)"; pill-width: 96px; active: root.lod-idx == 1; clicked => { root.lod-selected(1); } }
+                            }
+                        }
+                    }
+
+                    // Linha 2: Flags do Sensor & Rádio
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "SENSOR & MODO DE RÁDIO";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-muted;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            MousePill {
+                                text: root.motion-sync ? "Motion Sync: ON" : "Motion Sync: OFF";
+                                pill-width: 168px;
+                                pill-height: 26px;
+                                active: root.motion-sync;
+                                highlight: root.motion-sync;
+                                clicked => { root.sensor-toggled(0); }
+                            }
+                            MousePill {
+                                text: root.ripple-control ? "Ripple Control: ON" : "Ripple Control: OFF";
+                                pill-width: 168px;
+                                pill-height: 26px;
+                                active: root.ripple-control;
+                                highlight: root.ripple-control;
+                                clicked => { root.sensor-toggled(1); }
+                            }
+                            MousePill {
+                                text: root.linear-correction ? "Angle Snapping: ON" : "Angle Snapping: OFF";
+                                pill-width: 168px;
+                                pill-height: 26px;
+                                active: root.linear-correction;
+                                highlight: root.linear-correction;
+                                clicked => { root.sensor-toggled(2); }
+                            }
+                            MousePill {
+                                text: root.highspeed-mode ? "High-Speed: ON" : "High-Speed: OFF";
+                                pill-width: 162px;
+                                pill-height: 26px;
+                                active: root.highspeed-mode;
+                                highlight: root.highspeed-mode;
+                                clicked => { root.highspeed-toggled(); }
+                            }
+                        }
+                    }
+
+                    // Linha 3: Debounce (Key Response Delay 1..50ms)
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "DEBOUNCE / KEY RESPONSE DELAY (1 - 50 MS)";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-muted;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            MousePill { text: "-1 ms"; pill-width: 54px; clicked => { root.debounce-step(-1); } }
+                            Rectangle {
+                                width: 64px;
+                                height: 24px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.background;
+                                border-color: Theme.border-light;
+                                border-width: 1px;
+                                Text {
+                                    text: root.debounce-ms + " ms";
+                                    font-family: Theme.mono-font;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    color: Theme.text-primary;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+                            MousePill { text: "+1 ms"; pill-width: 54px; clicked => { root.debounce-step(1); } }
+
+                            Rectangle { width: 12px; }
+
+                            MousePill { text: "1 ms"; pill-width: 54px; active: root.debounce-ms == 1; clicked => { root.debounce-set(1); } }
+                            MousePill { text: "2 ms"; pill-width: 54px; active: root.debounce-ms == 2; clicked => { root.debounce-set(2); } }
+                            MousePill { text: "4 ms"; pill-width: 54px; active: root.debounce-ms == 4; clicked => { root.debounce-set(4); } }
+                            MousePill { text: "8 ms"; pill-width: 54px; active: root.debounce-ms == 8; clicked => { root.debounce-set(8); } }
+                            MousePill { text: "12 ms"; pill-width: 54px; active: root.debounce-ms == 12; clicked => { root.debounce-set(12); } }
+                            MousePill { text: "20 ms"; pill-width: 54px; active: root.debounce-ms == 20; clicked => { root.debounce-set(20); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // SUB-ABA 1: BOTÕES (ESQUEMA 5 BOTÕES + EDITOR)
+        // ============================================================
+        if (root.subtab == 1) : HorizontalLayout {
+            width: 720px;
+            spacing: 12px;
+
+            // Painel Esquerdo: Esquema Visual dos 5 Botões
+            Rectangle {
+                width: 248px;
+                height: 520px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 12px;
                     spacing: 10px;
 
                     Text {
-                        text: "DIAGNÓSTICO DO BOTÃO ESQUERDO";
+                        text: "ESQUEMA FÍSICO (5 BOTÕES)";
                         font-family: Theme.mono-font;
-                        font-size: 10px;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                        horizontal-alignment: center;
+                    }
+
+                    // Silhueta interativa do AJ179
+                    Rectangle {
+                        width: 224px;
+                        height: 422px;
+                        border-radius: 56px;
+                        background: Theme.background;
+                        border-color: Theme.border-light;
+                        border-width: 1.5px;
+
+                        // [0] Botão Esquerdo
+                        SchematicButton {
+                            x: 16px;
+                            y: 20px;
+                            width: 92px;
+                            height: 112px;
+                            slot-num: 0;
+                            slot-name: "ESQ";
+                            binding-label: root.button-labels.length > 0 ? root.button-labels[0] : "Clique Esq.";
+                            selected: root.selected-slot == 0;
+                            clicked => { root.slot-selected(0); }
+                        }
+
+                        // [1] Botão Direito
+                        SchematicButton {
+                            x: 116px;
+                            y: 20px;
+                            width: 92px;
+                            height: 112px;
+                            slot-num: 1;
+                            slot-name: "DIR";
+                            binding-label: root.button-labels.length > 1 ? root.button-labels[1] : "Clique Dir.";
+                            selected: root.selected-slot == 1;
+                            clicked => { root.slot-selected(1); }
+                        }
+
+                        // [2] Botão do Meio (Scroll)
+                        SchematicButton {
+                            x: 74px;
+                            y: 142px;
+                            width: 76px;
+                            height: 58px;
+                            slot-num: 2;
+                            slot-name: "SCROLL";
+                            binding-label: root.button-labels.length > 2 ? root.button-labels[2] : "Botão Meio";
+                            selected: root.selected-slot == 2;
+                            clicked => { root.slot-selected(2); }
+                        }
+
+                        // [3] Lateral Avançar (Frente)
+                        SchematicButton {
+                            x: 10px;
+                            y: 214px;
+                            width: 118px;
+                            height: 56px;
+                            slot-num: 3;
+                            slot-name: "AVANÇAR";
+                            binding-label: root.button-labels.length > 3 ? root.button-labels[3] : "Avançar";
+                            selected: root.selected-slot == 3;
+                            clicked => { root.slot-selected(3); }
+                        }
+
+                        // [4] Lateral Voltar (Trás)
+                        SchematicButton {
+                            x: 10px;
+                            y: 278px;
+                            width: 118px;
+                            height: 56px;
+                            slot-num: 4;
+                            slot-name: "VOLTAR";
+                            binding-label: root.button-labels.length > 4 ? root.button-labels[4] : "Voltar";
+                            selected: root.selected-slot == 4;
+                            clicked => { root.slot-selected(4); }
+                        }
+
+                        // Marcação do Sensor na base do corpo
+                        Text {
+                            x: 0px;
+                            y: 368px;
+                            width: 224px;
+                            text: "AJAZZ AJ179 NL P\nPAW3395 / NearLink";
+                            font-family: Theme.mono-font;
+                            font-size: 8px;
+                            color: Theme.text-muted;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    MousePill {
+                        text: "RESTAURAR 5 BOTÕES PADRÃO";
+                        pill-width: 224px;
+                        pill-height: 26px;
+                        enabled: root.ms-connected;
+                        clicked => { root.reset-buttons-clicked(); }
+                    }
+                }
+            }
+
+            // Painel Direito: Editor do Slot Selecionado
+            Rectangle {
+                width: 460px;
+                height: 520px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    // Cabeçalho do Slot Selecionado
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Rectangle {
+                            height: 24px;
+                            width: 158px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.surface-active;
+                            border-color: Theme.border-light;
+                            border-width: 1px;
+                            Text {
+                                text: root.slot-title;
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+
+                        Text {
+                            text: "Atual: " + root.slot-current-binding;
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            font-weight: 700;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Aviso de segurança de Clique Esquerdo
+                    if (root.btn-left-warning) : Rectangle {
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: #3A2F12;
+                        border-color: Theme.status-warning;
+                        border-width: 1px;
+
+                        Text {
+                            text: "Trava ativa: mantenha pelo menos um botão com Clique Esquerdo.";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.status-warning;
+                            x: 10px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+
+                    // Categorias de Ação
+                    HorizontalLayout {
+                        spacing: 4px;
+                        MousePill { text: "Mouse"; pill-width: 82px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
+                        MousePill { text: "Teclado"; pill-width: 82px; active: root.btn-category == 1; clicked => { root.btn-category-selected(1); } }
+                        MousePill { text: "Mídia"; pill-width: 82px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
+                        MousePill { text: "Sniper DPI"; pill-width: 88px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
+                        MousePill { text: "Desabilitar"; pill-width: 82px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
+                    }
+
+                    // Conteúdo da Categoria
+                    Rectangle {
+                        height: 356px;
+                        background: Theme.surface-raised;
+                        border-radius: Theme.radius-md;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        // Cat 0: Funções de Mouse
+                        if (root.btn-category == 0) : VerticalLayout {
+                            padding: 14px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            Text {
+                                text: "ESCOLHA A FUNÇÃO DE MOUSE";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                MousePill { text: "Clique Esq."; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 0; clicked => { root.btn-mouse-selected(0); } }
+                                MousePill { text: "Clique Dir."; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 1; clicked => { root.btn-mouse-selected(1); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                MousePill { text: "Botão do Meio"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 2; clicked => { root.btn-mouse-selected(2); } }
+                                MousePill { text: "Duplo Clique (Esq.)"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 3; clicked => { root.btn-mouse-selected(3); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                MousePill { text: "Avançar (Forward)"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 4; clicked => { root.btn-mouse-selected(4); } }
+                                MousePill { text: "Voltar (Back)"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 5; clicked => { root.btn-mouse-selected(5); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                MousePill { text: "Scroll Cima"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 6; clicked => { root.btn-mouse-selected(6); } }
+                                MousePill { text: "Scroll Baixo"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 7; clicked => { root.btn-mouse-selected(7); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                MousePill { text: "DPI + (Próximo)"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 8; clicked => { root.btn-mouse-selected(8); } }
+                                MousePill { text: "DPI - (Anterior)"; pill-width: 196px; pill-height: 34px; active: root.btn-mouse-idx == 9; clicked => { root.btn-mouse-selected(9); } }
+                            }
+                        }
+
+                        // Cat 1: Teclado / Atalhos
+                        if (root.btn-category == 1) : VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    MousePill { text: "Ctrl"; pill-width: 48px; active: (Math.mod(root.btn-mod-mask, 2) == 1); clicked => { root.btn-toggle-modifier(1); } }
+                                    MousePill { text: "Shift"; pill-width: 48px; active: (Math.mod(Math.floor(root.btn-mod-mask / 2), 2) == 1); clicked => { root.btn-toggle-modifier(2); } }
+                                    MousePill { text: "Alt"; pill-width: 48px; active: (Math.mod(Math.floor(root.btn-mod-mask / 4), 2) == 1); clicked => { root.btn-toggle-modifier(4); } }
+                                    MousePill { text: "Win"; pill-width: 48px; active: (Math.mod(Math.floor(root.btn-mod-mask / 8), 2) == 1); clicked => { root.btn-toggle-modifier(8); } }
+                                }
+
+                                Rectangle {
+                                    width: 152px;
+                                    height: 24px;
+                                    border-radius: Theme.radius-sm;
+                                    background: root.btn-capturing-key ? Theme.status-warning : (cap-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                                    border-color: root.btn-capturing-key ? Theme.status-warning : Theme.border-light;
+                                    border-width: 1px;
+
+                                    Text {
+                                        text: root.btn-capturing-key ? "APERTE A TECLA..." : "CAPTURAR TECLA";
+                                        font-family: Theme.mono-font;
+                                        font-size: 9px;
+                                        font-weight: 700;
+                                        color: root.btn-capturing-key ? #18181B : Theme.text-primary;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+
+                                    cap-fs := FocusScope {
+                                        key-pressed(ev) => {
+                                            if (root.btn-capturing-key) {
+                                                root.btn-capture-key(
+                                                    ev.text,
+                                                    ev.modifiers.control,
+                                                    ev.modifiers.shift,
+                                                    ev.modifiers.alt,
+                                                    ev.modifiers.meta
+                                                );
+                                                root.btn-capturing-key = false;
+                                                return accept;
+                                            }
+                                            reject
+                                        }
+                                    }
+
+                                    cap-ta := TouchArea {
+                                        clicked => {
+                                            root.btn-capturing-key = !root.btn-capturing-key;
+                                            if (root.btn-capturing-key) {
+                                                cap-fs.focus();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: root.btn-key-idx < root.key-catalog-labels.length
+                                    ? "Tecla selecionada: " + root.key-catalog-labels[root.btn-key-idx]
+                                    : "Selecione uma tecla:";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                            }
+
+                            Flickable {
+                                height: 266px;
+                                content-height: mcat-col.preferred-height;
+
+                                mcat-col := VerticalLayout {
+                                    spacing: 4px;
+                                    for r_idx in 22 : HorizontalLayout {
+                                        spacing: 4px;
+                                        for c_idx in 5 : Rectangle {
+                                            width: 78px;
+                                            height: 22px;
+                                            property <int> flat-idx: r_idx * 5 + c_idx;
+                                            visible: flat-idx < root.key-catalog-labels.length;
+                                            border-radius: Theme.radius-sm;
+                                            background: root.btn-key-idx == flat-idx ? Theme.surface-active : (mk-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                                            border-color: root.btn-key-idx == flat-idx ? Theme.text-primary : Theme.border;
+                                            border-width: 1px;
+
+                                            Text {
+                                                text: flat-idx < root.key-catalog-labels.length ? root.key-catalog-labels[flat-idx] : "";
+                                                font-family: Theme.mono-font;
+                                                font-size: 9px;
+                                                font-weight: root.btn-key-idx == flat-idx ? 700 : 500;
+                                                color: root.btn-key-idx == flat-idx ? Theme.text-primary : Theme.text-secondary;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                            }
+
+                                            mk-ta := TouchArea {
+                                                enabled: flat-idx < root.key-catalog-labels.length;
+                                                clicked => {
+                                                    root.btn-capturing-key = false;
+                                                    root.btn-catalog-key-selected(flat-idx);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Cat 2: Mídia / Consumer
+                        if (root.btn-category == 2) : VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "CONTROLES MULTIMÍDIA & ATALHOS DO WINDOWS";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+
+                            Flickable {
+                                height: 300px;
+                                content-height: med-col.preferred-height;
+
+                                med-col := VerticalLayout {
+                                    spacing: 6px;
+                                    for r_idx in 7 : HorizontalLayout {
+                                        spacing: 6px;
+                                        for c_idx in 3 : Rectangle {
+                                            width: 132px;
+                                            height: 28px;
+                                            property <int> m-idx: r_idx * 3 + c_idx;
+                                            visible: m-idx < root.media-labels.length;
+                                            border-radius: Theme.radius-sm;
+                                            background: root.btn-media-idx == m-idx ? Theme.surface-active : (md-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                                            border-color: root.btn-media-idx == m-idx ? Theme.text-primary : Theme.border;
+                                            border-width: 1px;
+
+                                            Text {
+                                                text: m-idx < root.media-labels.length ? root.media-labels[m-idx] : "";
+                                                font-family: Theme.mono-font;
+                                                font-size: 9px;
+                                                font-weight: root.btn-media-idx == m-idx ? 700 : 500;
+                                                color: root.btn-media-idx == m-idx ? Theme.text-primary : Theme.text-secondary;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                            }
+
+                                            md-ta := TouchArea {
+                                                enabled: m-idx < root.media-labels.length;
+                                                clicked => { root.btn-media-selected(m-idx); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Cat 3: Sniper DPI (40 01|02|04 00 00)
+                        if (root.btn-category == 3) : VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+                            alignment: start;
+
+                            Text {
+                                text: "SNIPER DPI (REDUZ SENSIBILIDADE ENQUANTO SEGURA)";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+
+                            MousePill {
+                                text: "Nível 1 (0x01) — Precisão Máxima";
+                                pill-width: 400px;
+                                pill-height: 36px;
+                                active: root.btn-sniper-idx == 0;
+                                clicked => { root.btn-sniper-selected(0); }
+                            }
+                            MousePill {
+                                text: "Nível 2 (0x02) — Precisão Média";
+                                pill-width: 400px;
+                                pill-height: 36px;
+                                active: root.btn-sniper-idx == 1;
+                                clicked => { root.btn-sniper-selected(1); }
+                            }
+                            MousePill {
+                                text: "Nível 3 (0x04) — Redução Leve";
+                                pill-width: 400px;
+                                pill-height: 36px;
+                                active: root.btn-sniper-idx == 2;
+                                clicked => { root.btn-sniper-selected(2); }
+                            }
+                        }
+
+                        // Cat 4: Desabilitar
+                        if (root.btn-category == 4) : VerticalLayout {
+                            padding: 20px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "BOTÃO DESABILITADO (00 00 00 00)";
+                                font-family: Theme.mono-font;
+                                font-size: 11px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "Nenhuma ação será disparada ao pressionar este botão.";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                color: Theme.text-secondary;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Rodapé Aplicar Botão
+                    HorizontalLayout {
+                        alignment: end;
+                        MousePill {
+                            text: "APLICAR BOTÃO NO MOUSE";
+                            pill-width: 196px;
+                            pill-height: 28px;
+                            enabled: root.ms-connected && !root.btn-left-warning;
+                            highlight: root.ms-connected && !root.btn-left-warning;
+                            clicked => { root.apply-button-clicked(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // SUB-ABA 2: ENERGIA & CONEXÃO
+        // ============================================================
+        if (root.subtab == 2) : VerticalLayout {
+            width: 720px;
+            spacing: 12px;
+
+            // Card 1: Temporizadores de Sleep
+            Rectangle {
+                width: 720px;
+                height: 186px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+
+                    Text {
+                        text: "ECONOMIA DE ENERGIA SEM FIO (NEARLINK 2.4G)";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "LIGHT SLEEP (ESPERA LEVE) — Atual: " + root.light-sleep-label;
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            MousePill { text: "10s"; pill-width: 78px; active: root.light-sleep == 10; clicked => { root.light-sleep-selected(10); } }
+                            MousePill { text: "30s"; pill-width: 78px; active: root.light-sleep == 30; clicked => { root.light-sleep-selected(30); } }
+                            MousePill { text: "1 min"; pill-width: 78px; active: root.light-sleep == 60; clicked => { root.light-sleep-selected(60); } }
+                            MousePill { text: "3 min"; pill-width: 78px; active: root.light-sleep == 180; clicked => { root.light-sleep-selected(180); } }
+                            MousePill { text: "Desligado"; pill-width: 90px; active: root.light-sleep == 0; clicked => { root.light-sleep-selected(0); } }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "DEEP SLEEP (SUSPENSÃO PROFUNDA) — Atual: " + root.deep-sleep-label;
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            MousePill { text: "3 min"; pill-width: 78px; active: root.deep-sleep == 180; clicked => { root.deep-sleep-selected(180); } }
+                            MousePill { text: "5 min"; pill-width: 78px; active: root.deep-sleep == 300; clicked => { root.deep-sleep-selected(300); } }
+                            MousePill { text: "10 min"; pill-width: 78px; active: root.deep-sleep == 600; clicked => { root.deep-sleep-selected(600); } }
+                            MousePill { text: "30 min"; pill-width: 78px; active: root.deep-sleep == 1800; clicked => { root.deep-sleep-selected(1800); } }
+                            MousePill { text: "Desligado"; pill-width: 90px; active: root.deep-sleep == 0; clicked => { root.deep-sleep-selected(0); } }
+                        }
+                    }
+                }
+            }
+
+            // Card 2: Direção do Scroll
+            Rectangle {
+                width: 720px;
+                height: 82px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "SENTIDO DA RODA DE SCROLL";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
                         font-weight: 700;
                         color: Theme.text-muted;
                     }
 
                     HorizontalLayout {
                         spacing: 8px;
-                        alignment: start;
+                        MousePill { text: "Normal (Forward)"; pill-width: 160px; pill-height: 26px; active: root.scroll-idx == 0; clicked => { root.scroll-selected(0); } }
+                        MousePill { text: "Invertido (Reverse)"; pill-width: 160px; pill-height: 26px; active: root.scroll-idx == 1; clicked => { root.scroll-selected(1); } }
+                    }
+                }
+            }
 
-                        Rectangle {
-                            width: 12px;
-                            height: 12px;
-                            border-radius: 6px;
-                            background: root.is-left-clicked ? Theme.status-warning : Theme.surface-raised;
-                            border-color: Theme.border;
-                            border-width: 1px;
-                            y: 4px;
-                        }
+            // Card 3: Pareamento NearLink 2.4G (06 13 09) com confirmação
+            Rectangle {
+                width: 720px;
+                height: 112px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: root.confirm-pairing ? Theme.status-warning : Theme.border;
+                border-width: 1px;
 
-                        Text {
-                            text: root.is-left-clicked ? "BOTÃO PRESSIONADO" : "ESTADO: LIVRE (NORMAL)";
-                            font-family: Theme.mono-font;
-                            font-size: 11px;
-                            font-weight: 600;
-                            color: root.is-left-clicked ? Theme.status-warning : Theme.text-primary;
-                        }
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "PAREAMENTO DO RECEPTOR NEARLINK 2.4G (OPCODE 06 13 09)";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
                     }
 
                     Text {
-                        text: "Monitorando continuidade do sinal do switch para prevenir comportamento de clique preso.";
+                        text: "Coloca o dongle USB em modo de pareamento (~30s). Aproxime o mouse ligado em 2.4G para reemparelhar.";
                         font-family: Theme.mono-font;
                         font-size: 9px;
                         color: Theme.text-secondary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        if (!root.confirm-pairing) : MousePill {
+                            text: "INICIAR PAREAMENTO 2.4G";
+                            pill-width: 190px;
+                            pill-height: 26px;
+                            enabled: root.ms-connected;
+                            clicked => { root.confirm-pairing = true; }
+                        }
+
+                        if (root.confirm-pairing) : HorizontalLayout {
+                            spacing: 8px;
+                            MousePill {
+                                text: "CONFIRMAR PAREAMENTO AGORA";
+                                pill-width: 210px;
+                                pill-height: 26px;
+                                highlight: true;
+                                clicked => {
+                                    root.confirm-pairing = false;
+                                    root.start-pairing-clicked();
+                                }
+                            }
+                            MousePill {
+                                text: "CANCELAR";
+                                pill-width: 96px;
+                                pill-height: 26px;
+                                clicked => { root.confirm-pairing = false; }
+                            }
+                        }
                     }
                 }
             }
