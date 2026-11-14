@@ -9,47 +9,95 @@ export component MainWindow inherits Window {
     title: "AJAZZ Companion Suite";
     default-font-family: "JetBrains Mono";
     preferred-width: 980px;
-    preferred-height: 640px;
-    min-width: 940px;
-    min-height: 600px;
+    preferred-height: 680px;
+    min-width: 980px;
+    max-width: 980px;
+    min-height: 680px;
+    max-height: 680px;
     background: Theme.background;
 
-    // Estado da aplicação
+    // Estado da aplicação e User Profile sincronizado com Daemon
     in-out property <int> active-tab: 0;
-    in-out property <color> current-color: #FF0000;
-    in-out property <bool> has-color: true;
-    in-out property <bool> daemon-online: true;
+    in-out property <bool> daemon-online: false;
+    in-out property <bool> device-connected: false;
     in-out property <string> chattering-alert: "";
 
+    in-out property <int> active-mode-index: 0;
+    in-out property <int> brightness: 4;
+    in-out property <int> speed: 2;
+    in-out property <int> direction: 0;
+    in-out property <bool> multicolor: false;
+    in-out property <int> zzcc-mode: 0;
+    in-out property <int> custom-bank: 0;
+    in-out property <bool> custom-eraser: false;
+
+    in-out property <color> current-color: #FF0000;
+    in-out property <string> hex-text: "#FF0000";
+    in-out property <string> red-text: "255";
+    in-out property <string> green-text: "0";
+    in-out property <string> blue-text: "0";
+    in-out property <[color]> key-colors: [];
+
+    // Capacidades dinâmicas por modo
+    in-out property <bool> supports-color: true;
+    in-out property <bool> supports-multicolor: true;
+    in-out property <bool> supports-speed: false;
+    in-out property <bool> supports-direction: false;
+    in-out property <string> dir-primary-label: "L → R";
+    in-out property <string> dir-reverse-label: "R → L";
+    in-out property <bool> supports-zzcc: false;
+    in-out property <bool> is-custom-mode: false;
+
+    // Popover HSV sob demanda
+    in-out property <bool> hsv-popover-open: false;
+    in-out property <image> hsv-sv-image;
+    in-out property <image> hsv-hue-image;
+    in-out property <float> hsv-h: 0.0;
+    in-out property <float> hsv-s: 1.0;
+    in-out property <float> hsv-v: 1.0;
+
     // Callbacks para o backend Rust
-    callback apply-color(color);
-    callback set-mode(int);
+    callback mode-selected(int);
+    callback brightness-changed(int);
+    callback speed-changed(int);
+    callback direction-changed(int);
+    callback multicolor-toggled(bool);
+    callback zzcc-changed(int);
+    callback custom-bank-selected(int);
+    callback custom-key-clicked(int, bool);
+    callback custom-fill-all();
+    callback custom-clear-all();
+    callback swatch-clicked(color);
+    callback hex-submitted(string);
+    callback rgb-submitted(string, string, string);
+    callback hsv-sv-updated(float, float);
+    callback hsv-hue-updated(float);
+    callback open-hsv-popover();
+    callback apply-clicked();
     callback reconnect-daemon();
 
     HorizontalLayout {
-        // Barra Lateral de Navegação
         Sidebar {
             active-tab <=> root.active-tab;
             daemon-online: root.daemon-online;
         }
 
-        // Área Central de Conteúdo
         Rectangle {
             background: Theme.background;
 
             // Aba 0: Teclado AK820
             if (root.active-tab == 0) : VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
+                padding: 20px;
+                spacing: 10px;
                 alignment: start;
 
-                // Título e status do dispositivo
+                // Título e status do hardware
                 HorizontalLayout {
-                    width: 604px;
+                    width: 720px;
                     alignment: space-between;
 
                     VerticalLayout {
-                        spacing: 3px;
+                        spacing: 2px;
                         alignment: center;
                         Text {
                             text: "AJAZZ AK820 75% MECHANICAL KEYBOARD";
@@ -85,12 +133,12 @@ export component MainWindow inherits Window {
                                     width: 6px;
                                     height: 6px;
                                     border-radius: 3px;
-                                    background: Theme.status-online;
+                                    background: root.device-connected ? Theme.status-online : (root.daemon-online ? Theme.status-warning : Theme.status-error);
                                 }
                             }
 
                             Text {
-                                text: "CONECTADO";
+                                text: root.device-connected ? "CONECTADO" : (root.daemon-online ? "SEM TECLADO" : "DAEMON OFFLINE");
                                 font-family: Theme.mono-font;
                                 font-size: 9px;
                                 font-weight: 700;
@@ -101,30 +149,57 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Layout Vetorial Físico das ~82 Teclas
+                // Layout Vetorial Físico das 82 Teclas
                 KeyboardView {
                     global-led-color: root.current-color;
-                    has-led: root.has-color;
+                    has-led: root.brightness > 0;
+                    key-colors: root.key-colors;
                     chattering-key: root.chattering-alert;
-                    key-clicked(key) => {
-                        // Clique na tecla
+                    key-clicked(key-idx) => {
+                        if (root.is-custom-mode) {
+                            root.custom-key-clicked(key-idx, root.custom-eraser);
+                        }
                     }
                 }
 
-                // Painel de Controles de Iluminação
+                // Painel de Controles de Iluminação Completo
                 LightingControls {
-                    selected-color: root.current-color;
-                    color-selected(col) => {
-                        root.current-color = col;
-                        root.has-color = true;
-                        root.apply-color(col);
-                    }
-                    apply-clicked => {
-                        root.apply-color(root.current-color);
-                    }
-                    mode-changed(mode) => {
-                        root.set-mode(mode);
-                    }
+                    active-mode-index <=> root.active-mode-index;
+                    brightness <=> root.brightness;
+                    speed <=> root.speed;
+                    direction <=> root.direction;
+                    multicolor <=> root.multicolor;
+                    zzcc-mode <=> root.zzcc-mode;
+                    custom-bank <=> root.custom-bank;
+                    custom-eraser <=> root.custom-eraser;
+                    selected-color <=> root.current-color;
+                    hex-text <=> root.hex-text;
+                    red-text <=> root.red-text;
+                    green-text <=> root.green-text;
+                    blue-text <=> root.blue-text;
+                    supports-color: root.supports-color;
+                    supports-multicolor: root.supports-multicolor;
+                    supports-speed: root.supports-speed;
+                    supports-direction: root.supports-direction;
+                    dir-primary-label: root.dir-primary-label;
+                    dir-reverse-label: root.dir-reverse-label;
+                    supports-zzcc: root.supports-zzcc;
+                    is-custom-mode: root.is-custom-mode;
+
+                    mode-selected(idx) => { root.mode-selected(idx); }
+                    brightness-changed(val) => { root.brightness-changed(val); }
+                    speed-changed(val) => { root.speed-changed(val); }
+                    direction-changed(val) => { root.direction-changed(val); }
+                    multicolor-toggled(val) => { root.multicolor-toggled(val); }
+                    zzcc-changed(val) => { root.zzcc-changed(val); }
+                    custom-bank-selected(b) => { root.custom-bank-selected(b); }
+                    custom-fill-all => { root.custom-fill-all(); }
+                    custom-clear-all => { root.custom-clear-all(); }
+                    swatch-clicked(c) => { root.swatch-clicked(c); }
+                    hex-submitted(txt) => { root.hex-submitted(txt); }
+                    rgb-submitted(r, g, b) => { root.rgb-submitted(r, g, b); }
+                    open-hsv-popover => { root.open-hsv-popover(); }
+                    apply-clicked => { root.apply-clicked(); }
                 }
             }
 
@@ -136,6 +211,165 @@ export component MainWindow inherits Window {
                 daemon-connected: root.daemon-online;
                 restart-daemon => {
                     root.reconnect-daemon();
+                }
+            }
+        }
+    }
+
+    // Popover HSV Contínuo sob Demanda
+    if (root.hsv-popover-open) : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000090;
+
+        TouchArea {
+            clicked => { root.hsv-popover-open = false; }
+        }
+
+        Rectangle {
+            x: 260px;
+            y: 356px;
+            width: 244px;
+            height: 230px;
+            border-radius: Theme.radius-md;
+            background: Theme.surface;
+            border-color: Theme.border-light;
+            border-width: 1px;
+
+            // Absorve cliques dentro do popover
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "SELETOR HSV CONTÍNUO";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.hex-text;
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Quadrado Saturação x Valor (220x132)
+                Rectangle {
+                    width: 220px;
+                    height: 132px;
+                    border-color: Theme.border;
+                    border-width: 1px;
+
+                    Image {
+                        width: 220px;
+                        height: 132px;
+                        source: root.hsv-sv-image;
+                    }
+
+                    // Mira sólida S/V
+                    Rectangle {
+                        x: root.hsv-s * 212px;
+                        y: (1.0 - root.hsv-v) * 124px;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        border-color: #FFFFFF;
+                        border-width: 1.5px;
+                        background: #00000000;
+                    }
+
+                    sv-ta := TouchArea {
+                        pointer-event(ev) => {
+                            if (self.pressed) {
+                                root.hsv-sv-updated(
+                                    clamp(self.mouse-x / 220px, 0.0, 1.0),
+                                    clamp(1.0 - (self.mouse-y / 132px), 0.0, 1.0)
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Barra de Matiz (Hue 0..360)
+                Rectangle {
+                    width: 220px;
+                    height: 16px;
+                    border-color: Theme.border;
+                    border-width: 1px;
+
+                    Image {
+                        width: 220px;
+                        height: 16px;
+                        source: root.hsv-hue-image;
+                    }
+
+                    Rectangle {
+                        x: (root.hsv-h / 360.0) * 216px;
+                        y: 0px;
+                        width: 4px;
+                        height: 16px;
+                        border-color: #FFFFFF;
+                        border-width: 1px;
+                        background: #00000000;
+                    }
+
+                    hue-ta := TouchArea {
+                        pointer-event(ev) => {
+                            if (self.pressed) {
+                                root.hsv-hue-updated(clamp((self.mouse-x / 220px) * 360.0, 0.0, 359.9));
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    Rectangle {
+                        width: 96px;
+                        height: 24px;
+                        border-radius: Theme.radius-sm;
+                        background: root.current-color;
+                        border-color: Theme.border-light;
+                        border-width: 1px;
+                    }
+
+                    Rectangle {
+                        width: 112px;
+                        height: 24px;
+                        border-radius: Theme.radius-sm;
+                        background: ok-ta.has-hover ? Theme.surface-hover : Theme.surface-active;
+                        border-color: Theme.border-light;
+                        border-width: 1px;
+
+                        Text {
+                            text: "APLICAR & FECHAR";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        ok-ta := TouchArea {
+                            clicked => {
+                                root.hsv-popover-open = false;
+                                root.apply-clicked();
+                            }
+                        }
+                    }
                 }
             }
         }
