@@ -138,6 +138,8 @@ Para controlar a cor individual de cada tecla ou renderizar animações/GIFs esp
    - `payload[7] = 0x00` (Reservado)
    - `payload[8..8+chunk_len] = dados RGB brutos`
 
-### 2.7 Prevenção de Desgaste de Memória Flash (25 FPS Streaming)
+### 2.7 Limitação de Streaming e Desgaste de Memória Flash (`Opcode 0x0B`)
 - O comando `Opcode 0x02` (`COMMIT_TRANSACTION`) persiste dados no setor não-volátil da memória Flash do microcontrolador.
-- **Regra Estrita de Streaming**: Em loops de animação ou projeção de GIFs a 25 FPS, o host transmite unicamente os 7 pacotes de `Opcode 0x0B` diretamente ao buffer volátil em RAM do MCU. **O envio contínuo de `Opcode 0x02` é terminantemente proibido**, garantindo vida útil infinita para a memória interna do teclado.
+- **Evidência Empírica no Hardware (AK820)**: Testes controlados (`flicker_diag` / `flicker_diag2`) demonstraram que **qualquer escrita contínua via `Opcode 0x0B`** (mesmo reenviando um quadro idêntico, apenas um chunk isolado ou sem `Opcode 0x02`) faz o teclado piscar visivelmente a cada escrita.
+- Isso indica que o controlador EVision reprocessa a iluminação a cada pacote `0x0B` recebido, não havendo evidência de que `0x0B` opere como framebuffer volátil em RAM isolada de flash.
+- **Decisão**: O streaming contínuo de GIFs por `Opcode 0x0B` é **inviável e proibido** no AK820 por causar cintilação constante e risco potencial de desgaste de memória Flash. O `Opcode 0x0B` deve ser usado exclusivamente para configuração estática pontual por tecla dentro de uma transação fechada (`0x01` -> `0x0B` -> `0x02`).

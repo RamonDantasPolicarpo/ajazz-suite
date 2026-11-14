@@ -24,50 +24,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         rt.block_on(async move {
             // Checa status inicial do Daemon
-            if let Ok(IpcResponse::Status { device_connected, is_playing_gif, .. }) = send_request(IpcRequest::GetStatus).await {
-                let _ = ui_weak_status.upgrade_in_event_loop(move |ui| {
-                    ui.set_daemon_online(device_connected);
-                    ui.set_is_playing_gif(is_playing_gif);
-                });
-            } else {
-                let _ = ui_weak_status.upgrade_in_event_loop(|ui| {
-                    ui.set_daemon_online(false);
-                });
-            }
+            let is_online = match send_request(IpcRequest::GetStatus).await {
+                Ok(IpcResponse::Status { device_connected, .. }) => device_connected,
+                _ => false,
+            };
+            let _ = ui_weak_status.upgrade_in_event_loop(move |ui| {
+                ui.set_daemon_online(is_online);
+            });
 
             // Loop de processamento de comandos IPC com polling de status
             let rx = rx;
             loop {
-                // Aguarda comando da UI ou timeout de 1s para atualizar status
                 tokio::select! {
                     Some(req) = async { rx.recv().ok() } => {
                         let resp = send_request(req).await;
                         let online = resp.is_ok();
-                        let is_playing = match &resp {
-                            Ok(IpcResponse::Status { is_playing_gif, .. }) => Some(*is_playing_gif),
-                            _ => None,
-                        };
                         let ui_w = ui_weak_status.clone();
                         let _ = ui_w.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(online);
-                            if let Some(playing) = is_playing {
-                                ui.set_is_playing_gif(playing);
-                            }
                         });
                     }
                     _ = tokio::time::sleep(Duration::from_millis(1500)) => {
-                        if let Ok(IpcResponse::Status { device_connected, is_playing_gif, .. }) = send_request(IpcRequest::GetStatus).await {
-                            let ui_w = ui_weak_status.clone();
-                            let _ = ui_w.upgrade_in_event_loop(move |ui| {
-                                ui.set_daemon_online(device_connected);
-                                ui.set_is_playing_gif(is_playing_gif);
-                            });
-                        } else {
-                            let ui_w = ui_weak_status.clone();
-                            let _ = ui_w.upgrade_in_event_loop(|ui| {
-                                ui.set_daemon_online(false);
-                            });
-                        }
+                        let is_online = match send_request(IpcRequest::GetStatus).await {
+                            Ok(IpcResponse::Status { device_connected, .. }) => device_connected,
+                            _ => false,
+                        };
+                        let ui_w = ui_weak_status.clone();
+                        let _ = ui_w.upgrade_in_event_loop(move |ui| {
+                            ui.set_daemon_online(is_online);
+                        });
                     }
                 }
             }
@@ -83,13 +68,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tx_color.send(IpcRequest::SetStaticColor { r, g, b });
     });
 
-    // Callback para troca de modo (0 = Estático, 1 = Chuva, 2 = GIF)
+    // Callback para troca de modo (0 = Estático, 1 = Chuva)
     let tx_mode = tx.clone();
     main_window.on_set_mode(move |mode_idx| {
         let mode = match mode_idx {
             1 => LightingMode::Rain,
-            2 => LightingMode::Custom,
-            _ => LightingMode::Static,
+            0 => LightingMode::Static,
+            _ => return,
         };
         let _ = tx_mode.send(IpcRequest::SetLighting {
             mode,
@@ -103,47 +88,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_reconnect = tx.clone();
     main_window.on_reconnect_daemon(move || {
         let _ = tx_reconnect.send(IpcRequest::GetStatus);
-    });
-
-    // Callback para abrir caixa de seleção de arquivo GIF nativa
-    let ui_weak_file = ui_weak.clone();
-    main_window.on_select_gif(move || {
-        let ui_w = ui_weak_file.clone();
-        std::thread::spawn(move || {
-            if let Some(file_path) = rfd::FileDialog::new()
-                .add_filter("GIF Animations", &["gif"])
-                .set_title("Selecionar Animação GIF para Teclado AK820")
-                .pick_file()
-            {
-                let path_str = file_path.to_string_lossy().to_string();
-                let _ = ui_w.upgrade_in_event_loop(move |ui| {
-                    ui.set_gif_path(path_str.into());
-                });
-            }
-        });
-    });
-
-    // Callback para iniciar reprodução de GIF
-    let tx_play = tx.clone();
-    let ui_weak_play = ui_weak.clone();
-    main_window.on_play_gif(move |path, fps| {
-        let _ = tx_play.send(IpcRequest::PlayGif {
-            path: path.to_string(),
-            fps: Some(fps as u8),
-        });
-        let _ = ui_weak_play.upgrade_in_event_loop(|ui| {
-            ui.set_is_playing_gif(true);
-        });
-    });
-
-    // Callback para parar reprodução de GIF
-    let tx_stop = tx.clone();
-    let ui_weak_stop = ui_weak.clone();
-    main_window.on_stop_gif(move || {
-        let _ = tx_stop.send(IpcRequest::StopGif);
-        let _ = ui_weak_stop.upgrade_in_event_loop(|ui| {
-            ui.set_is_playing_gif(false);
-        });
     });
 
     main_window.run()?;

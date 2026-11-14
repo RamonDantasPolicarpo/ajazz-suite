@@ -24,23 +24,51 @@ pub fn decode_gif_to_matrix_frames(
     }
 
     let mut frames = Vec::new();
+    // Canvas RGB persistente: GIFs otimizados enviam apenas sub-retângulos por frame.
     let mut rgb_buf = vec![0u8; width * height * 3];
+    let mut prev_rect: Option<(usize, usize, usize, usize)> = None;
+    let mut prev_bg = false;
 
     while let Some(frame) = decoder
         .read_next_frame()
         .map_err(|e| format!("Erro ao decodificar frame: {e}"))?
     {
-        for (i, chunk) in frame.buffer.chunks_exact(4).enumerate() {
-            if i < width * height {
-                // Mistura alfa simples contra fundo preto
-                let a = chunk[3] as u32;
-                rgb_buf[i * 3] = ((chunk[0] as u32 * a) / 255) as u8;
-                rgb_buf[i * 3 + 1] = ((chunk[1] as u32 * a) / 255) as u8;
-                rgb_buf[i * 3 + 2] = ((chunk[2] as u32 * a) / 255) as u8;
+        // Disposal do frame anterior: restaurar fundo preto na área ocupada.
+        if let (true, Some((l, t, w, h))) = (prev_bg, prev_rect) {
+            for y in t..(t + h).min(height) {
+                for x in l..(l + w).min(width) {
+                    let o = (y * width + x) * 3;
+                    rgb_buf[o..o + 3].fill(0);
+                }
             }
         }
-        let matrix_frame = project_image_to_matrix(width, height, &rgb_buf);
-        frames.push(matrix_frame);
+
+        let (l, t) = (frame.left as usize, frame.top as usize);
+        let (fw, fh) = (frame.width as usize, frame.height as usize);
+        for fy in 0..fh {
+            let y = t + fy;
+            if y >= height {
+                break;
+            }
+            for fx in 0..fw {
+                let x = l + fx;
+                if x >= width {
+                    break;
+                }
+                let p = (fy * fw + fx) * 4;
+                // Pixels transparentes mantêm o conteúdo anterior do canvas.
+                if frame.buffer[p + 3] >= 128 {
+                    let o = (y * width + x) * 3;
+                    rgb_buf[o] = frame.buffer[p];
+                    rgb_buf[o + 1] = frame.buffer[p + 1];
+                    rgb_buf[o + 2] = frame.buffer[p + 2];
+                }
+            }
+        }
+        prev_rect = Some((l, t, fw, fh));
+        prev_bg = frame.dispose == gif::DisposalMethod::Background;
+
+        frames.push(project_image_to_matrix(width, height, &rgb_buf));
     }
 
     if frames.is_empty() {

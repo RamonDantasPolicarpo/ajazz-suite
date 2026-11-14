@@ -20,17 +20,11 @@ export component MainWindow inherits Window {
     in-out property <bool> has-color: true;
     in-out property <bool> daemon-online: true;
     in-out property <string> chattering-alert: "";
-    in-out property <string> gif-path: "sample_wave.gif";
-    in-out property <int> gif-fps: 25;
-    in-out property <bool> is-playing-gif: false;
 
     // Callbacks para o backend Rust
     callback apply-color(color);
     callback set-mode(int);
     callback reconnect-daemon();
-    callback select-gif();
-    callback play-gif(string, int);
-    callback stop-gif();
 
     HorizontalLayout {
         // Barra Lateral de Navegação
@@ -120,10 +114,6 @@ export component MainWindow inherits Window {
                 // Painel de Controles de Iluminação
                 LightingControls {
                     selected-color: root.current-color;
-                    gif-path <=> root.gif-path;
-                    gif-fps <=> root.gif-fps;
-                    is-playing-gif <=> root.is-playing-gif;
-
                     color-selected(col) => {
                         root.current-color = col;
                         root.has-color = true;
@@ -134,15 +124,6 @@ export component MainWindow inherits Window {
                     }
                     mode-changed(mode) => {
                         root.set-mode(mode);
-                    }
-                    select-gif-clicked => {
-                        root.select-gif();
-                    }
-                    play-gif-clicked(path, fps) => {
-                        root.play-gif(path, fps);
-                    }
-                    stop-gif-clicked => {
-                        root.stop-gif();
                     }
                 }
             }
