@@ -80,26 +80,62 @@ payload[2] = ((checksum >> 8) & 0xFF) as u8; // MSB
 
 ---
 
-### 2.4 Anatomia Detalhada do Comando de Iluminação (`Opcode 0x06`)
+### 2.4 Anatomia Detalhada do Comando de Iluminação (`Opcode 0x06` — `sub_492b30`)
 
-Quando `payload[3] == 0x06`:
+Quando `payload[3] == 0x06` (bloco de `0x1D` = 29 bytes extraído de `LightInfo` e `SystemStages` no software oficial):
 
-| Offset | Tamanho | Valor Típico | Descrição |
+| Offset | Tamanho | Campo / Valor Típico | Descrição |
 | :--- | :--- | :--- | :--- |
-| `0x04` | 1 byte | `0x1D` (29) | Comprimento do bloco de parâmetros (bytes `0x05` a `0x21`). |
-| `0x05..0x08`| 4 bytes | `00 00 00 00` | Reservado / Índice de perfil. |
-| `0x09` | 1 byte | `0x06` ou `0x0F` | **Modo de Iluminação**: `0x06` = Normal / Estático, `0x0F` = Rain (Chuva). |
-| `0x0A` | 1 byte | `0x04` | **Brilho**: Nível 0 a 4 (ou 1 a 5). |
-| `0x0B` | 1 byte | `0x04` | **Velocidade**: Nível de velocidade da animação. |
-| `0x0C..0x0D`| 2 bytes | `00 00` | Flags de direção / animação. |
-| `0x0E` | 1 byte | `0x00..0xFF` | **Canal Vermelho (Red)** da cor primária. |
-| `0x0F` | 1 byte | `0x00..0xFF` | **Canal Verde (Green)** da cor primária. |
-| `0x10` | 1 byte | `0x00..0xFF` | **Canal Azul (Blue)** da cor primária. |
-| `0x11..0x1B`| 11 bytes| `00 ... 00` | Slots de gradiente / cores secundárias adicionais. |
-| `0x1C..0x1E`| 3 bytes | `FF 00 00` | Cor de backlight / secundária. |
-| `0x1F..0x20`| 2 bytes | `00 00` | Reservado. |
-| `0x21` | 1 byte | `0x01` | Flag de cor sólida / ativa. |
-| `0x22..0x3F`| 30 bytes| `00 ... 00` | Preenchimento com zeros (Padding). |
+| `0x04` | 1 byte | `0x1D` (29) | Comprimento do bloco de parâmetros (`payload[8..37]`). |
+| `0x05..0x06`| 2 bytes | `00 00` | Offset LE do comando `0x06` (`0x0000`). |
+| `0x07` | 1 byte | `0x00` | Reservado. |
+| `0x08` | 1 byte | `0x00` | Slot de perfil do dispositivo (`arg_c = 0x00`). |
+| `0x09` | 1 byte | `0x01..0x14` ou `0xFE` | **Modo de Iluminação**: `1..=18`, `20` (`0x14` Custom). Os modos `29` (`audiorecord`) e `30` (`capturecolor`) são remapeados para `0xFE` no fio. |
+| `0x0A` | 1 byte | `0x00..0x04` | **Brilho (`Light`)**: `0` (apagado) a `4` (máximo). |
+| `0x0B` | 1 byte | `4 - Speed` (`0x00..0x04`) | **Velocidade invertida**: o software grava `4 - Speed`, onde UI `4` (mais rápido) envia `0x00` e UI `0` (mais lento) envia `0x04`. |
+| `0x0C` | 1 byte | `0x00` ou `0x01` | **Direção (`Fx`)**: `0` = L→R / Anti-horário / Cima→Baixo / Dentro→Fora; `1` = R→L / Horário / Baixo→Cima / Fora→Dentro. |
+| `0x0D` | 1 byte | `0x00` ou `0x01` | **MultiColor (7-Color / Rainbow)**: `1` = ciclo 7 cores; `0` = cor sólida `(R, G, B)`. |
+| `0x0E` | 1 byte | `0x00..0xFF` | **Canal Vermelho (`Red`)** da cor primária. |
+| `0x0F` | 1 byte | `0x00..0xFF` | **Canal Verde (`Green`)** da cor primária. |
+| `0x10` | 1 byte | `0x00..0xFF` | **Canal Azul (`Blue`)** da cor primária. |
+| `0x11..0x19`| 9 bytes | `00 ... 00` | Zerado (`arg_ffffffa5..arg_ffffffad`). |
+| `0x1A` | 1 byte | `0x00..0x03` | **`ZZCCLedMode`**: Sub-modo (`Group 1..4`) exclusivo do modo `17` (Surmount). |
+| `0x1B` | 1 byte | `0x01` | **`SystemStages.Key6Flag`**: Padrão `1` (6-key/NKRO flag em `Keyboard.json`). |
+| `0x1C` | 1 byte | `0x10` (ou `0xFF`) | **`SystemStages.Repeat`**: Padrão `16` (`0x10`) em `Keyboard.json` (observado `0xFF` em captura USB inicial). |
+| `0x1D` | 1 byte | `0x00` | **`SystemStages.PollingRate`**: Padrão `0`. |
+| `0x1E` | 1 byte | `0x00` | **`SystemStages.RepeatDelay`**: Padrão `0`. |
+| `0x1F..0x20`| 2 bytes | `00 00` | Reservado (`0x00`). |
+| `0x21` | 1 byte | `0x00..0x02` | **`CustomGroup`**: Banco ativo (`0`, `1` ou `2` -> Custom 1..3) para o Modo `0x14`. |
+| `0x22` | 1 byte | `0x00` | Reservado (`0x00`). |
+| `0x23` | 1 byte | `0x00` | **`SystemStages.WFlag`**: Padrão `0`. |
+| `0x24` | 1 byte | `0x00` | **`SystemStages.WinFlag`**: Padrão `0` (trava tecla Win). |
+| `0x25..0x3F`| 27 bytes| `00 ... 00` | Preenchimento com zeros (Padding). |
+
+#### Tabela Completa de Modos de Iluminação (AK820 Array 0 + Capacidades de UI `sub_415010`)
+
+| ID Decimal | Hex Wire | Nome Oficial (`lan_en.xml`) | Cor RGB | 7-Color (`MultiColor`) | Brilho | Velocidade | Direção (`Fx`) | Extras |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `1` | `0x01` | **Corrugated** (`wave`) | Sim | Sim | Sim | Sim | L↔R (`0`/`1`) | — |
+| `2` | `0x02` | **Cloud** (`cloud`) | Sim | Sim | Sim | Sim | L↔R (`0`/`1`) | — |
+| `3` | `0x03` | **Serpentine** (`vortex`) | Sim | Sim | Sim | Sim | Clockwise / Anti (`1`/`0`) | — |
+| `4` | `0x04` | **Spectrum** (`mix_color`) | Não | Fixo Multi | Sim | Sim | Não | — |
+| `5` | `0x05` | **Breath** (`breath`) | Sim | Sim | Sim | Sim | Não | — |
+| `6` | `0x06` | **Normal / Static** (`static`) | Sim | Sim | Sim | Não | Não | — |
+| `7` | `0x07` | **Reaction** (`reaction`) | Sim | Sim | Sim | Sim | Não | — |
+| `8` | `0x08` | **Ripples** (`stone`) | Sim | Sim | Sim | Sim | Não | — |
+| `9` | `0x09` | **Traverse** (`traverse`) | Sim | Sim | Sim | Sim | Não | — |
+| `10` | `0x0A` | **Stars** (`stars`) | Sim | Sim | Sim | Sim | Não | — |
+| `11` | `0x0B` | **Flowers** (`firework_open`) | Não | Fixo Multi | Sim | Sim | Não | — |
+| `12` | `0x0C` | **Roll** (`roll`) | Não | Fixo Multi | Sim | Sim | Down→Up / Up→Down (`1`/`0`) | — |
+| `13` | `0x0D` | **Wave** (`wave_bar`) | Sim | Sim | Sim | Sim | Não | — |
+| `14` | `0x0E` | **Cartoon** (`cartoon`) | Sim | Sim | Sim | Sim | Não | — |
+| `15` | `0x0F` | **Rain** (`rain`) | Sim | Sim | Sim | Sim | Não | — |
+| `16` | `0x10` | **Scan** (`scan`) | Sim | Sim | Sim | Não | Não | — |
+| `17` | `0x11` | **Surmount** (`zzcc`) | Não | Fixo Multi | Sim | Sim | Não | `ZZCCLedMode` `0..=3` |
+| `18` | `0x12` | **Speed** (`speed`) | Não | Fixo Multi | Sim | Não | Outside / Inside (`1`/`0`) | — |
+| `20` | `0x14` | **Custom** (`custom`) | Sim (Pincel) | Não | Sim | Não | Não | `CustomGroup` `0..=2` + `0x0B` |
+| `29` | `0xFE` | **Audio wave** (`audiorecord`) | Sim | Sim | Sim | Não | Não | *Oculto — pesquisa futura* |
+| `30` | `0xFE` | **Capture** (`capturecolor`) | Não | Não | Sim | Não | Não | Streaming/Tela (`0xFE`) |
 
 ---
 
@@ -111,9 +147,9 @@ Para alterar o modo ou cor do teclado com sucesso, o host deve disparar exatamen
    ```
    04 01 00 01 00 00 00 00 00 00 00 00 ... (64 bytes)
    ```
-2. **Pacote 2 (Set Lighting & Color):**
+2. **Pacote 2 (Set Lighting & Parameters):**
    ```
-   04 [LSB] [MSB] 06 1D 00 00 00 00 [Modo] [Brilho] [Velocidade] 00 00 [R] [G] [B] ... 01 00 00 ...
+   04 [LSB] [MSB] 06 1D 00 00 00 00 [Modo] [Brilho] [4-Vel] [Fx] [Multi] [R] [G] [B] ... [ZZCC] [SystemStages...] [CustomGroup] ...
    ```
 3. **Pacote 3 (Commit Transaction):**
    ```
@@ -122,19 +158,22 @@ Para alterar o modo ou cor do teclado com sucesso, o host deve disparar exatamen
 
 ---
 
-### 2.6 Matriz de Iluminação Customizada Individual (`Opcode 0x0B`)
+### 2.6 Matriz de Iluminação Customizada Individual (`Opcode 0x0B` — `sub_47a890`)
 
-Para controlar a cor individual de cada tecla ou renderizar animações/GIFs espaciais:
+Para controlar a cor individual de cada tecla em modo estático por banco:
 
-1. **Ativação de Modo**: O teclado deve ser comutado para o **Modo 20 (`0x14` / Custom)** enviando `Opcode 0x06` com `payload[9] = 0x14`.
-2. **Buffer de Matriz**: São endereçadas 128 posições físicas de LED x 3 canais (R, G, B) = **384 bytes**.
-3. **Fragmentação em 7 Chunks de 56 Bytes**:
+1. **Ativação de Modo**: O teclado é comutado para o **Modo 20 (`0x14` / Custom)** enviando `Opcode 0x06` com `payload[9] = 0x14` e `payload[33] = CustomGroup` (`0`, `1` ou `2` correspondendo a Custom 1..3).
+2. **Buffer de Matriz e Bancos**: Cada banco possui stride de `0x200` (512 bytes) endereçando até 128 LEDs físicos × 3 canais (R, G, B) = **384 bytes úteis** (`sub_49f280` passa `offset_base = CustomGroup * 0x200`).
+   - Banco 0 (Custom 1): offset base `0x0000` (`0`)
+   - Banco 1 (Custom 2): offset base `0x0200` (`512`)
+   - Banco 2 (Custom 3): offset base `0x0400` (`1024`)
+3. **Fragmentação em Chunks de 56 Bytes**:
    O payload de cada pacote é estruturado como:
    - `payload[0] = 0x04` (Report ID)
    - `payload[1..2] = Checksum LE (soma de payload[3..64])`
    - `payload[3] = 0x0B` (Opcode)
-   - `payload[4] = chunk_len` (56 para chunks 0..5, 48 para chunk 6)
-   - `payload[5..6] = offset LE` (0, 56, 112, 168, 224, 280, 336)
+   - `payload[4] = chunk_len` (56 para chunks 0..5, 48 para chunk 6 no total de 384 bytes)
+   - `payload[5..6] = offset LE` (`(custom_group * 0x200) + chunk_offset`)
    - `payload[7] = 0x00` (Reservado)
    - `payload[8..8+chunk_len] = dados RGB brutos`
 
