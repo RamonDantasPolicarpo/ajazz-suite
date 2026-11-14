@@ -8,7 +8,7 @@ use ajazz_protocol::mouse::{
     MOUSE_BUTTON_COUNT,
 };
 use ajazz_protocol::{
-    Ak820Device, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
+    Ak820Device, GifCrop, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
     SystemStages, UserProfile, PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
 };
 use std::collections::BTreeMap;
@@ -43,7 +43,7 @@ pub enum DeviceCommand {
     UpsertMacro(MacroDefinition, oneshot::Sender<Result<(), String>>),
     DeleteMacro(String, oneshot::Sender<Result<(), String>>),
     SyncFromDevice(oneshot::Sender<Result<(), String>>),
-    PlayGif(String, u8, oneshot::Sender<Result<(), String>>),
+    PlayGif(String, Option<u8>, GifCrop, oneshot::Sender<Result<(), String>>),
     StopGif(oneshot::Sender<Result<(), String>>),
     RenderFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     CaptureFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
@@ -421,11 +421,11 @@ pub async fn run_device_actor(
                 let _ = resp.send(result);
             }
 
-            DeviceCommand::PlayGif(path, fps, resp) => {
+            DeviceCommand::PlayGif(path, fps, crop, resp) => {
                 let saved_lighting = pre_gif_lighting.unwrap_or(profile.lighting);
                 cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop, &mut audio_stop);
 
-                let result = match decode_gif_to_matrix_frames(&path) {
+                let result = match decode_gif_to_matrix_frames(&path, crop) {
                     Ok(frames) if frames.is_empty() => {
                         Err("O arquivo GIF não contém nenhum frame válido.".to_string())
                     }
@@ -443,30 +443,33 @@ pub async fn run_device_actor(
                                     let (cancel_tx, mut cancel_rx) = watch::channel(false);
                                     gif_cancel_tx = Some(cancel_tx);
 
-                                    let eff_fps = fps.clamp(1, 60);
-                                    let interval_ms = (1000 / eff_fps as u64).max(16);
+                                    let eff_fps = fps.filter(|&v| v > 0).map(|v| v.clamp(1, 60));
                                     let tx_clone = cmd_tx.clone();
 
                                     tokio::spawn(async move {
-                                        let mut interval = tokio::time::interval(
-                                            Duration::from_millis(interval_ms),
-                                        );
-                                        interval.set_missed_tick_behavior(
-                                            tokio::time::MissedTickBehavior::Skip,
-                                        );
-                                        let mut frame_idx = 0usize;
+                                        if total == 1 {
+                                            let _ = tx_clone
+                                                .try_send(DeviceCommand::RenderFrame(frames[0].matrix));
+                                            let _ = cancel_rx.changed().await;
+                                            return;
+                                        }
 
+                                        let mut frame_idx = 0usize;
                                         loop {
+                                            let frame = frames[frame_idx];
+                                            if let Err(mpsc::error::TrySendError::Closed(_)) = tx_clone
+                                                .try_send(DeviceCommand::RenderFrame(frame.matrix))
+                                            {
+                                                break;
+                                            }
+                                            let wait_ms = match eff_fps {
+                                                Some(f) => (1000 / f as u64).max(16),
+                                                None => frame.delay_ms.max(20),
+                                            };
+                                            frame_idx = (frame_idx + 1) % total;
+
                                             tokio::select! {
-                                                _ = interval.tick() => {
-                                                    let frame = frames[frame_idx];
-                                                    if let Err(mpsc::error::TrySendError::Closed(_)) =
-                                                        tx_clone.try_send(DeviceCommand::RenderFrame(frame))
-                                                    {
-                                                        break;
-                                                    }
-                                                    frame_idx = (frame_idx + 1) % total;
-                                                }
+                                                _ = tokio::time::sleep(Duration::from_millis(wait_ms)) => {}
                                                 _ = cancel_rx.changed() => {
                                                     if *cancel_rx.borrow() {
                                                         break;
@@ -477,8 +480,8 @@ pub async fn run_device_actor(
                                     });
 
                                     info!(
-                                        "Reprodução de GIF iniciada via 0x12: '{}' ({} frames @ {} FPS)",
-                                        path, total, eff_fps
+                                        "Reprodução de GIF iniciada via 0x12: '{}' ({} frames, fps={:?}, crop={:?})",
+                                        path, total, eff_fps, crop.normalized()
                                     );
                                     Ok(())
                                 }

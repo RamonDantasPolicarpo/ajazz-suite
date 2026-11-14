@@ -37,6 +37,34 @@ component SubTabPill inherits Rectangle {
     }
 }
 
+component ModalActionBtn inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <length> btn-width: 72px;
+    callback clicked();
+
+    width: root.btn-width;
+    height: 22px;
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised);
+    border-color: root.active ? Theme.border-light : Theme.border;
+    border-width: 1px;
+
+    Text {
+        text: root.label;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "AJAZZ Companion Suite";
     default-font-family: "JetBrains Mono";
@@ -136,6 +164,17 @@ export component MainWindow inherits Window {
     in-out property <float> hsv-s: 1.0;
     in-out property <float> hsv-v: 1.0;
 
+    // Modal de Enquadramento / Velocidade GIF sob demanda
+    in-out property <bool> gif-crop-modal-open: false;
+    in-out property <image> gif-preview-image;
+    in-out property <float> gif-preview-w: 320.0;
+    in-out property <float> gif-preview-h: 180.0;
+    in-out property <float> gif-crop-x: 0.0;
+    in-out property <float> gif-crop-y: 0.0;
+    in-out property <float> gif-crop-w: 1.0;
+    in-out property <float> gif-crop-h: 1.0;
+    in-out property <string> gif-crop-info-text: "100%";
+
     // Callbacks para o backend Rust
     callback mode-selected(int);
     callback brightness-changed(int);
@@ -153,6 +192,12 @@ export component MainWindow inherits Window {
     callback gif-browse-clicked();
     callback gif-fps-selected(int);
     callback gif-play-toggle();
+    callback gif-crop-open-clicked();
+    callback gif-crop-pan(float, float);
+    callback gif-crop-zoom(float);
+    callback gif-crop-fit-keyboard();
+    callback gif-crop-reset();
+    callback gif-crop-applied();
     callback swatch-clicked(color);
     callback hex-submitted(string);
     callback rgb-submitted(string, string, string);
@@ -444,6 +489,7 @@ export component MainWindow inherits Window {
                     gif-browse-clicked => { root.gif-browse-clicked(); }
                     gif-fps-selected(fps) => { root.gif-fps-selected(fps); }
                     gif-play-toggle => { root.gif-play-toggle(); }
+                    gif-crop-open-clicked => { root.gif-crop-open-clicked(); }
                     swatch-clicked(c) => { root.swatch-clicked(c); }
                     hex-submitted(txt) => { root.hex-submitted(txt); }
                     rgb-submitted(r, g, b) => { root.rgb-submitted(r, g, b); }
@@ -770,6 +816,235 @@ export component MainWindow inherits Window {
                                 root.hsv-popover-open = false;
                                 root.apply-clicked();
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Modal de Enquadramento (Pan/Zoom) & Velocidade do GIF sob demanda
+    if (root.gif-crop-modal-open) : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000090;
+
+        TouchArea {
+            clicked => {
+                root.gif-crop-modal-open = false;
+                root.gif-crop-applied();
+            }
+        }
+
+        Rectangle {
+            width: 444px;
+            height: 410px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-md;
+            background: Theme.surface;
+            border-color: Theme.border-light;
+            border-width: 1px;
+
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "ENQUADRAR GIF (PAINEL 22×6)";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.gif-crop-info-text;
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Viewport de Preview + Moldura de Recorte
+                Rectangle {
+                    width: 420px;
+                    height: 236px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.background;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    clip: true;
+
+                    Rectangle {
+                        width: root.gif-preview-w * 1px;
+                        height: root.gif-preview-h * 1px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: root.gif-preview-image;
+                            image-fit: fill;
+                        }
+
+                        // Máscaras escuras fora do recorte
+                        Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: root.gif-crop-y * parent.height;
+                            background: #0000009A;
+                        }
+                        Rectangle {
+                            x: 0px;
+                            y: (root.gif-crop-y + root.gif-crop-h) * parent.height;
+                            width: parent.width;
+                            height: (1.0 - root.gif-crop-y - root.gif-crop-h) * parent.height;
+                            background: #0000009A;
+                        }
+                        Rectangle {
+                            x: 0px;
+                            y: root.gif-crop-y * parent.height;
+                            width: root.gif-crop-x * parent.width;
+                            height: root.gif-crop-h * parent.height;
+                            background: #0000009A;
+                        }
+                        Rectangle {
+                            x: (root.gif-crop-x + root.gif-crop-w) * parent.width;
+                            y: root.gif-crop-y * parent.height;
+                            width: (1.0 - root.gif-crop-x - root.gif-crop-w) * parent.width;
+                            height: root.gif-crop-h * parent.height;
+                            background: #0000009A;
+                        }
+
+                        // Borda da janela selecionada
+                        Rectangle {
+                            x: root.gif-crop-x * parent.width;
+                            y: root.gif-crop-y * parent.height;
+                            width: root.gif-crop-w * parent.width;
+                            height: root.gif-crop-h * parent.height;
+                            border-color: Theme.status-online;
+                            border-width: 1.5px;
+                            background: #00000000;
+                        }
+
+                        crop-ta := TouchArea {
+                            property <length> last-x: 0px;
+                            property <length> last-y: 0px;
+
+                            pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.down) {
+                                    self.last-x = self.mouse-x;
+                                    self.last-y = self.mouse-y;
+                                } else if (ev.kind == PointerEventKind.move && self.pressed) {
+                                    root.gif-crop-pan(
+                                        (self.mouse-x - self.last-x) / max(1px, parent.width),
+                                        (self.mouse-y - self.last-y) / max(1px, parent.height)
+                                    );
+                                    self.last-x = self.mouse-x;
+                                    self.last-y = self.mouse-y;
+                                }
+                            }
+
+                            scroll-event(ev) => {
+                                if (ev.delta-y != 0px) {
+                                    root.gif-crop-zoom(ev.delta-y > 0px ? 1.12 : 0.89);
+                                }
+                                return EventResult.accept;
+                            }
+                        }
+                    }
+                }
+
+                // Controles de Enquadramento e Zoom
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        ModalActionBtn {
+                            btn-width: 158px;
+                            label: "ENCAIXAR TECLADO (16:6)";
+                            clicked => { root.gif-crop-fit-keyboard(); }
+                        }
+                        ModalActionBtn {
+                            btn-width: 82px;
+                            label: "100% CHEIO";
+                            clicked => { root.gif-crop-reset(); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        ModalActionBtn {
+                            btn-width: 62px;
+                            label: "ZOOM -";
+                            clicked => { root.gif-crop-zoom(0.85); }
+                        }
+                        ModalActionBtn {
+                            btn-width: 62px;
+                            label: "ZOOM +";
+                            clicked => { root.gif-crop-zoom(1.18); }
+                        }
+                    }
+                }
+
+                // Presets rápidos de Velocidade / FPS
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "VELOCIDADE:";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 4px;
+                        for preset in [0, 2, 4, 6, 10, 15, 25, 30] : ModalActionBtn {
+                            btn-width: preset == 0 ? 44px : 32px;
+                            label: preset == 0 ? "AUTO" : preset;
+                            active: root.gif-fps == preset;
+                            clicked => { root.gif-fps-selected(preset); }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                // Rodapé
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    Text {
+                        text: "Arraste na imagem para mover • Scroll para zoom";
+                        font-family: Theme.mono-font;
+                        font-size: 8px;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+
+                    ModalActionBtn {
+                        btn-width: 122px;
+                        label: "APLICAR & FECHAR";
+                        active: true;
+                        clicked => {
+                            root.gif-crop-modal-open = false;
+                            root.gif-crop-applied();
                         }
                     }
                 }

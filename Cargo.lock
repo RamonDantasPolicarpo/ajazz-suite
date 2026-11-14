@@ -172,6 +172,7 @@ name = "ajazz-gui"
 version = "0.1.0"
 dependencies = [
  "ajazz-protocol",
+ "gif",
  "serde",
  "serde_json",
  "slint",

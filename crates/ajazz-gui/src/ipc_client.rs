@@ -1,6 +1,6 @@
 use ajazz_protocol::mouse::{MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus};
 use ajazz_protocol::{
-    KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
+    GifCrop, KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -46,6 +46,7 @@ pub enum IpcRequest {
     PlayGif {
         path: String,
         fps: Option<u8>,
+        crop: GifCrop,
     },
     StopGif,
     GetStatus,

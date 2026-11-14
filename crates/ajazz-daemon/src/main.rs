@@ -220,15 +220,21 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                 )
                 .await
             }
-            Ok(IpcRequest::PlayGif { path, fps }) => {
-                let eff_fps = fps.unwrap_or(25).clamp(1, 60);
+            Ok(IpcRequest::PlayGif { path, fps, crop }) => {
+                let eff_fps = fps.filter(|&v| v > 0).map(|v| v.clamp(1, 60));
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = cmd_tx
-                    .send(DeviceCommand::PlayGif(path, eff_fps, reply_tx))
+                    .send(DeviceCommand::PlayGif(path, eff_fps, crop, reply_tx))
                     .await;
+                let rate_label = match eff_fps {
+                    Some(f) => format!("{f} FPS"),
+                    None => "AUTO (ritmo do GIF)".to_string(),
+                };
                 match reply_rx.await {
                     Ok(Ok(())) => IpcResponse::Ok {
-                        message: format!("Reprodução de GIF iniciada a {eff_fps} FPS (RAM volátil 0x12)"),
+                        message: format!(
+                            "Reprodução de GIF iniciada em {rate_label} (RAM volátil 0x12)"
+                        ),
                     },
                     Ok(Err(err)) => IpcResponse::Error { error: err },
                     Err(_) => IpcResponse::Error {

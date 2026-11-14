@@ -29,8 +29,8 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
   - `PlayGif` / `StopGif` / `RenderFrame` reativados usando `0xFE` uma única vez no início e streaming em RAM volátil via `Opcode 0x12` (zero escrita flash `0x0B`/`0x02` em loop), restaurando o efeito anterior no `StopGif`.
 - **Interface Gráfica Nativa (`ajazz-gui`):**
   - Sub-abas em `AK820 RGB` (`Iluminação`, `Remapear Teclas`, `Macros`, `Sistema`) mantendo o teclado 82 teclas fixo no topo (`980x680` travado) com destaque de seleção e ponto indicador de remapeamento.
-  - Modo `Audio` na 21ª vaga da grade `7×3` com linha contextual dos 7 estilos + toggle/cor de fundo, e barra compacta `GIF LIVE` (seletor nativo Windows `GetOpenFileNameW`, FPS `15/25/30` e `PLAY/PARAR GIF` sincronizado com o Daemon).
-- **Validação de Hardware Concluída:** `Audio Sync` (7 estilos + fundo) e `GIF Player (0x12)` aprovados pelo usuário no AK820 físico (paridade total do teclado concluída).
+  - Modo `Audio` na 21ª vaga da grade `7×3` com linha contextual dos 7 estilos + toggle/cor de fundo, e barra compacta `GIF LIVE` (seletor nativo Windows `GetOpenFileNameW`, modo `AUTO` usando delay embutido do `.gif` ou passo manual `1..30 FPS`, modal `ENQUADRAR` com pan/zoom + proporção teclado `16:6`, e `PLAY/PARAR GIF` em RAM volátil `0x12` sincronizado com o Daemon).
+- **Validação de Hardware Concluída:** `Audio Sync` (7 estilos + fundo) e `GIF Player (0x12)` aprovados pelo usuário no AK820 físico (paridade total do teclado concluída). Refinamento de enquadramento (`GifCrop`) e velocidade (`AUTO` + `1..30 FPS`) implementado em protocolo/daemon/GUI aguardando validação rápida em hardware.
 
 ---
 
@@ -71,11 +71,11 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `a4a0590`: `feat(daemon): integrate AJ179 NL P mouse IPC, state sync, and hot-unplug handling`
 - `b690faa`: `fix(gui): prevent periodic MouseStatus polls from resetting button and DPI drafts`
 - `6720984`: `fix(protocol,gui): reclassify 0x40 mouse codes as ACPI System Power/Sleep/Wake`
+- `f2d5833`: `fix(daemon,docs): poll mouse battery/status every 15s and record AJ179 validation`
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. **Refinamentos do GIF Player (`ajazz-daemon` + `ajazz-protocol`)**: enquadramento/recorte (*crop* / *pan & zoom*) da região projetada no `Key Matrix Frame` e velocidades mais lentas abaixo de 15 FPS.
-2. **Macros no Mouse (`06 31`) e Detector de Switch Chattering**: codificação/upload de macros para o AJ179 NL P (`06 31`) e diagnóstico ao vivo de `Switch Chattering`.
-3. **Melhorias Visuais na GUI (`ajazz-gui`)**: rodada obrigatória de **Grill Me** para integrar `shape_mouse_cima.svg` / `shape_mouse_lado.svg` e ajustes visuais finais junto dos controles das novas features.
+1. **Macros no Mouse (`06 31`) e Detector de Switch Chattering**: codificação/upload de macros para o AJ179 NL P (`06 31`) e diagnóstico ao vivo de `Switch Chattering`.
+2. **Melhorias Visuais na GUI (`ajazz-gui`)**: rodada obrigatória de **Grill Me** para integrar `shape_mouse_cima.svg` / `shape_mouse_lado.svg` e ajustes visuais finais junto dos controles das novas features.

@@ -1,4 +1,86 @@
 use crate::RgbColor;
+use serde::{Deserialize, Serialize};
+
+/// Razão de aspecto física aproximada da matriz de teclas do AK820 (~572x210 px).
+pub const AK820_MATRIX_ASPECT: f32 = 572.0 / 210.0;
+pub const GIF_CROP_MIN_SIZE: f32 = 0.08;
+
+/// Janela normalizada (0.0..1.0) usada para recortar/enquadrar quadros de GIF na matriz física.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GifCrop {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Default for GifCrop {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        }
+    }
+}
+
+impl GifCrop {
+    pub fn normalized(self) -> Self {
+        let w = if self.width.is_finite() {
+            self.width.clamp(GIF_CROP_MIN_SIZE, 1.0)
+        } else {
+            1.0
+        };
+        let h = if self.height.is_finite() {
+            self.height.clamp(GIF_CROP_MIN_SIZE, 1.0)
+        } else {
+            1.0
+        };
+        let x = if self.x.is_finite() {
+            self.x.clamp(0.0, 1.0 - w)
+        } else {
+            0.0
+        };
+        let y = if self.y.is_finite() {
+            self.y.clamp(0.0, 1.0 - h)
+        } else {
+            0.0
+        };
+        Self {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+
+    /// Calcula recorte centralizado respeitando a proporção física do teclado (`AK820_MATRIX_ASPECT`).
+    pub fn keyboard_aspect_fit(img_width: usize, img_height: usize) -> Self {
+        if img_width == 0 || img_height == 0 {
+            return Self::default();
+        }
+        let img_aspect = img_width as f32 / img_height as f32;
+        if img_aspect > AK820_MATRIX_ASPECT {
+            let w = (AK820_MATRIX_ASPECT / img_aspect).clamp(GIF_CROP_MIN_SIZE, 1.0);
+            Self {
+                x: (1.0 - w) * 0.5,
+                y: 0.0,
+                width: w,
+                height: 1.0,
+            }
+        } else {
+            let h = (img_aspect / AK820_MATRIX_ASPECT).clamp(GIF_CROP_MIN_SIZE, 1.0);
+            Self {
+                x: 0.0,
+                y: (1.0 - h) * 0.5,
+                width: 1.0,
+                height: h,
+            }
+        }
+    }
+}
 
 /// Total de posições de LEDs endereçáveis na matriz de controle do microcontrolador.
 pub const TOTAL_PHYSICAL_LEDS: usize = 128;
@@ -123,17 +205,31 @@ pub fn project_image_to_matrix(
     img_height: usize,
     rgb_data: &[u8],
 ) -> [RgbColor; TOTAL_PHYSICAL_LEDS] {
+    project_image_to_matrix_with_crop(img_width, img_height, rgb_data, GifCrop::default())
+}
+
+/// Projeta uma janela recortada/enquadrada (`crop`) de um quadro RGB na matriz física do AK820.
+#[inline]
+pub fn project_image_to_matrix_with_crop(
+    img_width: usize,
+    img_height: usize,
+    rgb_data: &[u8],
+    crop: GifCrop,
+) -> [RgbColor; TOTAL_PHYSICAL_LEDS] {
     let mut matrix = [RgbColor::default(); TOTAL_PHYSICAL_LEDS];
     if img_width == 0 || img_height == 0 || rgb_data.len() < img_width * img_height * 3 {
         return matrix;
     }
 
+    let crop = crop.normalized();
     let w_max = (img_width - 1) as f32;
     let h_max = (img_height - 1) as f32;
 
     for key in &AK820_KEY_LAYOUT {
-        let px = ((key.norm_x * w_max).round() as usize).min(img_width - 1);
-        let py = ((key.norm_y * h_max).round() as usize).min(img_height - 1);
+        let nx = (crop.x + key.norm_x * crop.width).clamp(0.0, 1.0);
+        let ny = (crop.y + key.norm_y * crop.height).clamp(0.0, 1.0);
+        let px = ((nx * w_max).round() as usize).min(img_width - 1);
+        let py = ((ny * h_max).round() as usize).min(img_height - 1);
         let idx = (py * img_width + px) * 3;
 
         let r = rgb_data[idx];
@@ -146,4 +242,52 @@ pub fn project_image_to_matrix(
     }
 
     matrix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crop_normalization_and_projection_focus_quadrant() {
+        let crop = GifCrop {
+            x: 0.9,
+            y: 0.8,
+            width: 0.5,
+            height: 0.5,
+        }
+        .normalized();
+        assert!((crop.x - 0.5).abs() < 1e-5);
+        assert!((crop.y - 0.5).abs() < 1e-5);
+
+        // Imagem 4x4: quadrante inferior-direito azul, resto vermelho.
+        let mut rgb = vec![0u8; 4 * 4 * 3];
+        for y in 0..4 {
+            for x in 0..4 {
+                let idx = (y * 4 + x) * 3;
+                if x >= 2 && y >= 2 {
+                    rgb[idx + 2] = 255;
+                } else {
+                    rgb[idx] = 255;
+                }
+            }
+        }
+        let focused = GifCrop {
+            x: 0.65,
+            y: 0.65,
+            width: 0.35,
+            height: 0.35,
+        };
+        let matrix = project_image_to_matrix_with_crop(4, 4, &rgb, focused);
+        // Esc (phys_led 0) e Seta Direita/Espaço ficam dentro do quadrante azul.
+        assert_eq!(matrix[0], RgbColor::new(0, 0, 255));
+    }
+
+    #[test]
+    fn keyboard_aspect_fit_centers_square_image_vertically() {
+        let fit = GifCrop::keyboard_aspect_fit(200, 200);
+        assert!((fit.width - 1.0).abs() < 1e-5);
+        assert!(fit.height < 0.5);
+        assert!((fit.y - (1.0 - fit.height) * 0.5).abs() < 1e-5);
+    }
 }

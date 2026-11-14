@@ -1,18 +1,22 @@
 slint::include_modules!();
 
 mod file_dialog;
+mod gif_preview;
 mod ipc_client;
 mod keymap_ui;
 mod mouse_ui;
 
 use ajazz_protocol::mouse::{MouseConfig, MouseStatus};
 use ajazz_protocol::{
-    AudioStyle, DirectionKind, KeyAssignment, LightingConfig, LightingDirection, LightingMode,
-    MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor, UserProfile,
-    AK820_KEY_LAYOUT, HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
+    AudioStyle, DirectionKind, GifCrop, KeyAssignment, LightingConfig, LightingDirection,
+    LightingMode, MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor,
+    UserProfile, AK820_KEY_LAYOUT, HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
 };
 use ipc_client::{send_request, IpcRequest, IpcResponse};
-use slint::{Color, ComponentHandle, Image, ModelRc, Rgb8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{
+    Color, ComponentHandle, Image, ModelRc, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
+    VecModel,
+};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,6 +37,10 @@ pub struct GuiState {
     pub gif_path: Option<String>,
     pub gif_fps: u8,
     pub is_playing_gif: bool,
+    pub gif_crop: GifCrop,
+    pub gif_preview: Option<gif_preview::GifPreviewData>,
+    pub gif_preview_frame_idx: usize,
+    pub gif_preview_next_at: Instant,
     pub draft_mouse_config: MouseConfig,
     pub mouse_synced_initial: bool,
     pub mouse_force_resync: bool,
@@ -59,6 +67,10 @@ impl GuiState {
             gif_path: None,
             gif_fps: 25,
             is_playing_gif: false,
+            gif_crop: GifCrop::default(),
+            gif_preview: None,
+            gif_preview_frame_idx: 0,
+            gif_preview_next_at: Instant::now(),
             draft_mouse_config,
             mouse_synced_initial: false,
             mouse_force_resync: false,
@@ -210,6 +222,50 @@ fn compute_preview_colors(profile: &UserProfile) -> Vec<Color> {
     out
 }
 
+fn build_play_gif_request(st: &GuiState) -> Option<IpcRequest> {
+    st.gif_path.as_ref().map(|path| IpcRequest::PlayGif {
+        path: path.clone(),
+        fps: (st.gif_fps > 0).then_some(st.gif_fps),
+        crop: st.gif_crop.normalized(),
+    })
+}
+
+fn sync_gif_crop_to_ui(ui: &MainWindow, st: &GuiState) {
+    let (pw, ph) = if let Some(ref preview) = st.gif_preview {
+        let scale = (404.0 / preview.width as f32).min(220.0 / preview.height as f32);
+        (
+            (preview.width as f32 * scale).round().max(32.0),
+            (preview.height as f32 * scale).round().max(32.0),
+        )
+    } else {
+        (320.0, 180.0)
+    };
+    let crop = st.gif_crop.normalized();
+    ui.set_gif_preview_w(pw);
+    ui.set_gif_preview_h(ph);
+    ui.set_gif_crop_x(crop.x);
+    ui.set_gif_crop_y(crop.y);
+    ui.set_gif_crop_w(crop.width);
+    ui.set_gif_crop_h(crop.height);
+    let zoom_pct = (100.0 / crop.width.max(crop.height)).round() as u32;
+    let frames_count = st.gif_preview.as_ref().map_or(0, |p| p.frames.len());
+    ui.set_gif_crop_info_text(SharedString::from(format!(
+        "{frames_count} frames • ZOOM {zoom_pct}%"
+    )));
+}
+
+fn set_gif_preview_frame_image(ui: &MainWindow, st: &GuiState) {
+    let Some(ref preview) = st.gif_preview else {
+        return;
+    };
+    let Some(frame) = preview.frames.get(st.gif_preview_frame_idx % preview.frames.len()) else {
+        return;
+    };
+    let buf =
+        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&frame.rgba, preview.width, preview.height);
+    ui.set_gif_preview_image(Image::from_rgba8(buf));
+}
+
 fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
     let cfg = st.profile.lighting;
     let mode_idx = LightingMode::ALL
@@ -242,6 +298,7 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
         ui.set_gif_file_name(SharedString::from("Nenhum .gif selecionado"));
         ui.set_gif_has_file(false);
     }
+    sync_gif_crop_to_ui(ui, st);
 
     ui.set_supports_color(caps.supports_color);
     ui.set_supports_multicolor(caps.supports_multicolor);
@@ -758,19 +815,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_w = main_window.as_weak();
         let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
         main_window.on_gif_browse_clicked(move || {
             let ui_clone = ui_w.clone();
             let st_clone = Arc::clone(&st_c);
+            let tx_clone = tx_c.clone();
             std::thread::spawn(move || {
                 if let Some(path) = file_dialog::pick_gif_file() {
-                    {
+                    let preview = gif_preview::load_gif_preview(std::path::Path::new(&path)).ok();
+                    let restart_req = {
                         let mut st = st_clone.lock().unwrap();
                         st.gif_path = Some(path);
+                        st.gif_crop = GifCrop::default();
+                        st.gif_preview = preview;
+                        st.gif_preview_frame_idx = 0;
+                        st.gif_preview_next_at = Instant::now();
+                        if st.is_playing_gif {
+                            build_play_gif_request(&st)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(req) = restart_req {
+                        let _ = tx_clone.send(req);
                     }
                     let st_ui = Arc::clone(&st_clone);
                     let _ = ui_clone.upgrade_in_event_loop(move |ui| {
                         let st = st_ui.lock().unwrap();
                         sync_ui_from_state(&ui, &st);
+                        set_gif_preview_frame_image(&ui, &st);
                     });
                 }
             });
@@ -782,12 +855,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let st_c = Arc::clone(&state);
         let tx_c = tx.clone();
         main_window.on_gif_fps_selected(move |fps| {
-            let eff_fps = fps.clamp(1, 60) as u8;
-            let restart_path = {
+            let eff_fps = if fps <= 0 { 0 } else { fps.clamp(1, 30) as u8 };
+            let restart_req = {
                 let mut st = st_c.lock().unwrap();
                 st.gif_fps = eff_fps;
                 if st.is_playing_gif {
-                    st.gif_path.clone()
+                    build_play_gif_request(&st)
                 } else {
                     None
                 }
@@ -795,11 +868,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_w.upgrade() {
                 ui.set_gif_fps(eff_fps as i32);
             }
-            if let Some(path) = restart_path {
-                let _ = tx_c.send(IpcRequest::PlayGif {
-                    path,
-                    fps: Some(eff_fps),
-                });
+            if let Some(req) = restart_req {
+                let _ = tx_c.send(req);
             }
         });
     }
@@ -813,13 +883,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if st.is_playing_gif {
                     Some(IpcRequest::StopGif)
                 } else {
-                    st.gif_path.as_ref().map(|p| IpcRequest::PlayGif {
-                        path: p.clone(),
-                        fps: Some(st.gif_fps),
-                    })
+                    build_play_gif_request(&st)
                 }
             };
             if let Some(req) = action {
+                let _ = tx_c.send(req);
+            }
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_crop_open_clicked(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            if st.gif_preview.is_none() {
+                if let Some(ref p) = st.gif_path {
+                    st.gif_preview = gif_preview::load_gif_preview(std::path::Path::new(p)).ok();
+                }
+            }
+            st.gif_preview_frame_idx = 0;
+            st.gif_preview_next_at = Instant::now();
+            sync_gif_crop_to_ui(&ui, &st);
+            set_gif_preview_frame_image(&ui, &st);
+            ui.set_gif_crop_modal_open(st.gif_preview.is_some() || st.gif_path.is_some());
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_crop_pan(move |dx, dy| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            st.gif_crop = gif_preview::crop_box_pan(st.gif_crop, dx, dy);
+            sync_gif_crop_to_ui(&ui, &st);
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_crop_zoom(move |factor| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            st.gif_crop = gif_preview::crop_box_zoom(st.gif_crop, factor);
+            sync_gif_crop_to_ui(&ui, &st);
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_crop_fit_keyboard(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            let (w, h) = st
+                .gif_preview
+                .as_ref()
+                .map_or((16, 9), |p| (p.width as usize, p.height as usize));
+            st.gif_crop = GifCrop::keyboard_aspect_fit(w, h);
+            sync_gif_crop_to_ui(&ui, &st);
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_crop_reset(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            st.gif_crop = GifCrop::default();
+            sync_gif_crop_to_ui(&ui, &st);
+        });
+    }
+
+    {
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_gif_crop_applied(move || {
+            let restart_req = {
+                let st = st_c.lock().unwrap();
+                if st.is_playing_gif {
+                    build_play_gif_request(&st)
+                } else {
+                    None
+                }
+            };
+            if let Some(req) = restart_req {
                 let _ = tx_c.send(req);
             }
         });
@@ -1504,6 +1666,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Callbacks do Mouse AJ179 NL P ---
     mouse_ui::register_mouse_callbacks(&main_window, &state, &tx);
 
+    // Timer leve para animar preview do GIF somente com o modal aberto
+    let gif_preview_timer = slint::Timer::default();
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        gif_preview_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(16),
+            move || {
+                let Some(ui) = ui_w.upgrade() else {
+                    return;
+                };
+                if !ui.get_gif_crop_modal_open() {
+                    return;
+                }
+                let now = Instant::now();
+                let mut st = st_c.lock().unwrap();
+                let Some(ref preview) = st.gif_preview else {
+                    return;
+                };
+                if preview.frames.len() <= 1 || now < st.gif_preview_next_at {
+                    return;
+                }
+                let next_idx = (st.gif_preview_frame_idx + 1) % preview.frames.len();
+                let delay_ms = if st.gif_fps > 0 {
+                    (1000.0 / st.gif_fps as f64).round().max(16.0) as u64
+                } else {
+                    preview.frames[next_idx].delay_ms
+                };
+                st.gif_preview_frame_idx = next_idx;
+                st.gif_preview_next_at = now + Duration::from_millis(delay_ms);
+                set_gif_preview_frame_image(&ui, &st);
+            },
+        );
+    }
+
     main_window.run()?;
     Ok(())
 }
@@ -1546,6 +1744,20 @@ mod feedback_tests {
         assert_eq!(ui.get_gif_file_name().as_str(), "demo.gif");
         assert_eq!(ui.get_gif_fps(), 30);
         assert!(ui.get_is_playing_gif());
+
+        st.gif_fps = 0; // AUTO (embedded GIF delays)
+        st.gif_crop = GifCrop {
+            x: 0.1,
+            y: 0.2,
+            width: 0.5,
+            height: 0.5,
+        };
+        sync_ui_from_state(&ui, &st);
+        assert_eq!(ui.get_gif_fps(), 0);
+        assert!((ui.get_gif_crop_x() - 0.1).abs() < 1e-4);
+        assert!((ui.get_gif_crop_w() - 0.5).abs() < 1e-4);
+        let auto_req = build_play_gif_request(&st).unwrap();
+        assert!(matches!(auto_req, IpcRequest::PlayGif { fps: None, .. }));
 
         // Valida telemetria, DPI e flag dirty do Mouse AJ179 na mesma instância Slint.
         st.mouse_connected = true;
