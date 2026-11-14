@@ -125,17 +125,32 @@ O pacote de 64 bytes usa cabeçalho de 5 bytes e slots consecutivos de 4 bytes i
 
 ## 5. Upload de Macros (`06 31`, `sub_430860`, `ev_16d19d...`)
 
-- **Contêiner**: buffer de até `0xFA0` (`4000` bytes).
-  - `[0x00..0x3F]`: tabela de 32 offsets `u16_le` (inicializada em `0x0040`), indicando o início do corpo de cada macro.
-  - `[0x40..]`: sequência de eventos de **4 bytes** `[delay_lo, delay_hi, tipo_flags, codigo]`:
-    - `0x42` / `0x02`: Tecla HID normal Press / Release (`0x41` / `0x01` para modificadores)
-    - `0x43` / `0x03`: Botão de mouse Press / Release (`codigo` = máscara)
-    - `0x44`: Scroll (`0x01` = cima, `0xFF` = baixo)
-    - `0x06`: Movimento XY ou código especial
-    - **Terminador obrigatório após o último evento**: `[final_delay:u16_le, 0x83, 0x01]`.
-- **Transporte em Fatias (`06 31`)**:
-  - Até `59` bytes (`0x3B`) por pacote HID, intervalo de 10 ms entre pacotes:
-  - `[0]=0x06, [1]=0x31, [2]=<chunk_len (<=0x3B)>, [3..4]=<offset:u16_le>, [5..63]=<data>`
+- **Contêiner**: buffer de trabalho alocado e zerado (`0x1080` bytes), com cursor de escrita iniciando em `0x40` (`64`), limitado a `0xFA0` (`4000`) bytes no envio (`sub_430860`, endereços `0x430860..0x4310de`).
+  - `[0x00..0x3F]`: tabela de **32 slots** (`u16_le`, `slot_idx = 0..31`), zerada na inicialização (`0x0000` = slot ausente/vazio). Para cada macro configurada no perfil/botão `i`, grava-se o offset inicial do seu corpo (`cursor` em `u16_le`) em `buf[i * 2..i * 2 + 1]`.
+  - `[0x40..]`: corpo sequencial de eventos de **4 bytes** `[delay_lo, delay_hi, tipo_flags, codigo]`:
+    - **Semântica de Delay (Pre-Delay)**: antes de gravar os eventos de uma macro, inicializa-se `next_delay = 10` (`0x000A` ms). Para cada passo `step_idx`:
+      1. Os bytes `[+0..+1]` recebem `next_delay` (`u16_le`) — ou seja, o delay **anterior** à execução daquele evento (o primeiro evento sempre tem `0x000A` ms = 10 ms).
+      2. O campo de delay registrado no passo (`delay_time` do registro atual) atualiza `next_delay` para o próximo evento (ou para o terminador, se for o último passo).
+    - **Bytes `[+2, +3]` por Tipo de Evento**:
+      - **Tecla Normal Press / Release** (`0x42` / `0x02`): `codigo` = USB HID Usage ID (`sub_44af90`, `0x04..0xE7`).
+      - **Tecla Modificadora Press / Release** (`0x41` / `0x01`): para VK `0xA0..0xA5` e `0x5B..0x5C` (HID `0xE0..0xE7`), `codigo` (`sub_44bce0`) é a **máscara de bits de modificador** (`LCtrl=0x01`, `LShift=0x02`, `LAlt=0x04`, `LWin=0x08`, `RCtrl=0x10`, `RShift=0x20`, `RAlt=0x40`, `RWin=0x80`).
+      - *(Pareamento seguro, `sub_41dd70`)*: o editor oficial garante que todo Key Down sem Key Up correspondente receba um Release sintético com `10 ms` antes do fim.
+      - **Botão de Mouse Press / Release** (`0x43` / `0x03`): `codigo` = máscara de botão AJ179 (`0x01=Esquerdo`, `0x02=Direito`, `0x04=Meio`, `0x08=Voltar`, `0x10=Avançar`). Se `"Scroll Up"` ou `"Scroll Down"`, sobrescreve para `[0x44, 0x01]` ou `[0x44, 0xFF]`.
+      - **Scroll** (`0x44`): `codigo = 0x01` (Scroll Up) ou `0xFF` (Scroll Down).
+      - **Wait / Delay / Especial / Move XY** (`0x06`): `types 8..=0xB` gravam `[0x06, val]`; movimento relativo XY (`type 0xC`) grava `codigo = (dx_lo << 4) | (dy_lo & 0x0F)` e aplica os bits de sinal em `byte[+1]` (`0x80` / `0x40`).
+  - **Terminador Obrigatório no Último Passo (`loc_430dc8..0x430e0d`)**:
+    - Clampa `final_delay = next_delay`: se `<= 0` usa `10`; se `> 10000` usa `10000`.
+    - Grava imediatamente após o último evento em `[cursor + 4..+7]`:
+      - `[+4..+5]`: `final_delay:u16_le` (via OR sobre buffer zerado)
+      - `[+6]`: `0x83`, `[+7]`: `0x01`
+    - Avança `cursor += 8` (dentro do bloco final) e `cursor += 4` (avanço normal do loop) => **4 bytes do último evento + 4 bytes do terminador + 4 bytes zero de padding (`+8..+11`)** antes do offset da próxima macro.
+- **Transporte em Fatias (`06 31`, `loc_430f3a..0x4310a2`)**:
+  - `total_len = min(cursor, 0xFA0)`.
+  - Número de pacotes: `num_chunks = (total_len / 59) + 1` (`0x3B == 59`).
+  - Cada pacote de 64 bytes (`expect_reply = 1`, seguido de `Sleep(10)`):
+    - `[0]=0x06, [1]=0x31, [2]=chunk_len` (`0x3B`, exceto o último pacote que envia `total_len % 0x3B`), `[3..4]=offset:u16_le`, `[5..63]=dados`.
+- **Vínculo em Botão (`06 12`, `sub_4310e0`)**:
+  - Slot do botão preenchido com `[0x60, macro_idx, loop_mode, loop_count]`, onde `macro_idx` (`0..31`) aponta para a entrada na tabela `[0x00..0x3F]` e `loop_mode` é `0` (N vezes, `loop_count >= 1`), `1` (até soltar o botão) ou `2` (alternar até pressionar novamente).
 
 ---
 
