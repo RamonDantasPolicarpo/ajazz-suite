@@ -181,6 +181,7 @@ export component LightingControls inherits Rectangle {
     callback gif-browse-clicked();
     callback gif-fps-selected(int);
     callback gif-play-toggle();
+    callback gif-crop-open-clicked();
     callback swatch-clicked(color);
     callback hex-submitted(string);
     callback rgb-submitted(string, string, string);
@@ -536,13 +537,13 @@ export component LightingControls inherits Rectangle {
                 }
 
                 StepPill {
-                    pill-width: 98px;
+                    pill-width: 94px;
                     text: "PROCURAR .GIF";
                     clicked => { root.gif-browse-clicked(); }
                 }
 
                 Rectangle {
-                    width: 248px;
+                    width: 152px;
                     height: 22px;
                     border-radius: Theme.radius-sm;
                     background: Theme.background;
@@ -561,10 +562,17 @@ export component LightingControls inherits Rectangle {
                         overflow: elide;
                     }
                 }
+
+                StepPill {
+                    pill-width: 72px;
+                    text: "ENQUADRAR";
+                    enabled: root.gif-has-file;
+                    clicked => { root.gif-crop-open-clicked(); }
+                }
             }
 
             HorizontalLayout {
-                spacing: 6px;
+                spacing: 4px;
                 alignment: end;
 
                 Text {
@@ -576,16 +584,51 @@ export component LightingControls inherits Rectangle {
                     vertical-alignment: center;
                 }
 
-                for fps in [15, 25, 30] : StepPill {
-                    pill-width: 34px;
-                    text: fps;
-                    active: root.gif-fps == fps;
-                    clicked => { root.gif-fps-selected(fps); }
+                StepPill {
+                    pill-width: 38px;
+                    text: "AUTO";
+                    active: root.gif-fps == 0;
+                    clicked => { root.gif-fps-selected(0); }
+                }
+
+                StepPill {
+                    pill-width: 22px;
+                    text: "-";
+                    clicked => {
+                        root.gif-fps-selected(root.gif-fps <= 0 ? 12 : clamp(root.gif-fps - 1, 1, 30));
+                    }
                 }
 
                 Rectangle {
-                    width: 92px;
-                    height: 22px;
+                    width: 48px;
+                    height: 24px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.background;
+                    border-color: root.gif-fps > 0 ? Theme.border-light : Theme.border;
+                    border-width: 1px;
+
+                    Text {
+                        text: root.gif-fps == 0 ? "AUTO" : root.gif-fps + " FPS";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: root.gif-fps > 0 ? Theme.text-primary : Theme.text-secondary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
+                StepPill {
+                    pill-width: 22px;
+                    text: "+";
+                    clicked => {
+                        root.gif-fps-selected(root.gif-fps <= 0 ? 15 : clamp(root.gif-fps + 1, 1, 30));
+                    }
+                }
+
+                Rectangle {
+                    width: 84px;
+                    height: 24px;
                     border-radius: Theme.radius-sm;
                     background: root.is-playing-gif
                         ? (gif-play-ta.has-hover ? #4A2226 : #3A1A1D)
