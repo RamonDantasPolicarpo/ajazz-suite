@@ -13,6 +13,8 @@ pub mod macros;
 pub use macros::*;
 pub mod matrix;
 pub use matrix::*;
+pub mod mouse;
+pub use mouse::*;
 
 /// EVision Semiconductor (Fabricante do controlador USB do teclado físico AK820)
 pub const AK820_VID: u16 = 0x320F;

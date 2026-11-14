@@ -43,8 +43,8 @@ Documentação orientada a evidências obtida por engenharia reversa estática d
 | `10` | `u8` | Mouse FW Major.Minor | Byte hex (`%02x`), ex.: `0x12` -> `"1.2.<patch>"` |
 | `11` | `u8` | Modo de conexão | `[edi+0x7d7]` (`3` vs outros) |
 | `12` | `u8` | Online / Acordado | `0` = offline / em repouso; `!= 0` = ativo |
-| `13` | `u8` | Carregando | `0` = desconectado do cabo; `1` = carregando |
-| `14` | `u8` | Bateria (%) | `0..100` |
+| `13` | `u8` | Bateria (%) | `0..100` (validado em hardware: `0x32` = 50%, `[edi+0x7da]`) |
+| `14` | `u8` | Carregando | `0` = desconectado do cabo; `1` = carregando (`[edi+0x7d9]`) |
 | `16` | `u8` | `dpi_count` | Estágios ativos (`1..6`) |
 | `17` | `u8` | `dpi_index` | Índice do estágio selecionado (`0..5`) |
 | `18..29` | `6 × u16_le` | Estágios DPI 1..6 | `DPI = (raw_u16_le + 1) * 50` (`50..26000` DPI em passos de `50`) |
@@ -144,5 +144,5 @@ O pacote de 64 bytes usa cabeçalho de 5 bytes e slots consecutivos de 4 bytes i
   - Identificadas quando `rx[1] == 0xFA`; o tipo de evento está em `rx[5]`:
     - `0x01` ou `0x06`: Mouse reconectado / acordou (re-consultar estado com `06 05`)
     - `0x02`: Estágio de DPI alterado fisicamente no mouse (`rx[6] = dpi_index`)
-    - `0x03`: Atualização de bateria (`rx[6] = charging`, `rx[7] = battery %`)
+    - `0x03`: Atualização de bateria (`rx[6] = battery %`, `rx[7] = charging`)
     - `0x50`: Evento de pareamento / ação (`rx[6]`, `rx[7]`)
