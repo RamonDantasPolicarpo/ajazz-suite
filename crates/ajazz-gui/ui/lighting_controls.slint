@@ -1,214 +1,467 @@
 import { Theme } from "theme.slint";
 
-export component ColorSwatch inherits Rectangle {
+component ColorSwatch inherits Rectangle {
     in property <color> swatch-color;
     in property <bool> is-selected: false;
+    in property <bool> enabled: true;
     callback clicked();
 
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: Theme.radius-sm;
     background: root.swatch-color;
-    border-color: root.is-selected ? Theme.text-primary : Theme.border;
-    border-width: root.is-selected ? 2px : 1px;
+    opacity: root.enabled ? 1.0 : 0.35;
+    border-color: root.is-selected && root.enabled ? Theme.text-primary : Theme.border;
+    border-width: root.is-selected && root.enabled ? 2px : 1px;
 
     TouchArea {
+        enabled: root.enabled;
         clicked => { root.clicked(); }
     }
 }
 
-export component LightingControls inherits Rectangle {
-    in-out property <int> active-mode: 0; // 0 = Estático, 1 = Chuva
-    in-out property <color> selected-color: #FF0000;
-    in-out property <int> brightness: 4;
-    in-out property <int> speed: 4;
+component StepPill inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <length> pill-width: 26px;
+    callback clicked();
 
-    callback color-selected(color);
-    callback mode-changed(int);
+    width: root.pill-width;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: !root.enabled ? Theme.background : (root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised));
+    border-color: root.active && root.enabled ? Theme.border-light : Theme.border;
+    border-width: 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component ModeChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    width: 95px;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised);
+    border-color: root.active ? Theme.text-primary : Theme.border;
+    border-width: 1px;
+
+    Text {
+        text: root.label;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component InlineField inherits Rectangle {
+    in-out property <string> value;
+    in property <string> prefix: "";
+    in property <length> field-width: 50px;
+    in property <bool> enabled: true;
+    callback submitted(string);
+
+    width: root.field-width;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: Theme.background;
+    border-color: inp.has-focus ? Theme.border-light : Theme.border;
+    border-width: 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 3px;
+        alignment: start;
+
+        if (root.prefix != "") : Text {
+            text: root.prefix;
+            font-family: Theme.mono-font;
+            font-size: 9px;
+            font-weight: 700;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+        }
+
+        inp := TextInput {
+            text <=> root.value;
+            font-family: Theme.mono-font;
+            font-size: 10px;
+            color: Theme.text-primary;
+            selection-background-color: Theme.surface-active;
+            vertical-alignment: center;
+            single-line: true;
+            enabled: root.enabled;
+            accepted => { root.submitted(self.text); }
+        }
+    }
+}
+
+export component LightingControls inherits Rectangle {
+    in property <[string]> mode-labels: [
+        "Normal", "Corrugated", "Cloud", "Serpentine", "Spectrum", "Breath", "Reaction",
+        "Ripples", "Traverse", "Stars", "Flowers", "Roll", "Wave", "Cartoon",
+        "Rain", "Scan", "Surmount", "Speed", "Capture", "Custom"
+    ];
+    in-out property <int> active-mode-index: 0;
+    in-out property <int> brightness: 4;
+    in-out property <int> speed: 2;
+    in-out property <int> direction: 0;
+    in-out property <bool> multicolor: false;
+    in-out property <int> zzcc-mode: 0;
+    in-out property <int> custom-bank: 0;
+    in-out property <bool> custom-eraser: false;
+
+    in-out property <color> selected-color: #FF0000;
+    in-out property <string> hex-text: "#FF0000";
+    in-out property <string> red-text: "255";
+    in-out property <string> green-text: "0";
+    in-out property <string> blue-text: "0";
+
+    // Capacidades reativas do efeito ativo (preenchidas pelo backend Rust)
+    in property <bool> supports-color: true;
+    in property <bool> supports-multicolor: true;
+    in property <bool> supports-speed: false;
+    in property <bool> supports-direction: false;
+    in property <string> dir-primary-label: "L → R";
+    in property <string> dir-reverse-label: "R → L";
+    in property <bool> supports-zzcc: false;
+    in property <bool> is-custom-mode: false;
+
+    callback mode-selected(int);
+    callback brightness-changed(int);
+    callback speed-changed(int);
+    callback direction-changed(int);
+    callback multicolor-toggled(bool);
+    callback zzcc-changed(int);
+    callback custom-bank-selected(int);
+    callback custom-fill-all();
+    callback custom-clear-all();
+    callback swatch-clicked(color);
+    callback hex-submitted(string);
+    callback rgb-submitted(string, string, string);
+    callback open-hsv-popover();
     callback apply-clicked();
 
-    width: 604px; // Alinhamento exato com a largura do KeyboardView
+    width: 720px;
     background: Theme.surface;
     border-radius: Theme.radius-lg;
     border-color: Theme.border;
     border-width: 1px;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 14px;
+        padding: 14px;
+        spacing: 10px;
 
-        // Cabeçalho dos Modos
+        // 1. Grade de Seleção dos 19 Efeitos Nativos + Modo Custom (7x3)
+        VerticalLayout {
+            spacing: 4px;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "LIGHTING EFFECTS (FIRMWARE + CUSTOM)";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                }
+                Text {
+                    text: root.mode-labels[root.active-mode-index];
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 4px;
+                for i in [0, 1, 2, 3, 4, 5, 6] : ModeChip {
+                    label: root.mode-labels[i];
+                    active: root.active-mode-index == i;
+                    clicked => { root.mode-selected(i); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                for i in [7, 8, 9, 10, 11, 12, 13] : ModeChip {
+                    label: root.mode-labels[i];
+                    active: root.active-mode-index == i;
+                    clicked => { root.mode-selected(i); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                for i in [14, 15, 16, 17, 18, 19] : ModeChip {
+                    label: root.mode-labels[i];
+                    active: root.active-mode-index == i;
+                    clicked => { root.mode-selected(i); }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // 2. Parâmetros: Brilho, Velocidade, 7-Color
+        HorizontalLayout {
+            spacing: 18px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "BRILHO:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                for lvl in [0, 1, 2, 3, 4] : StepPill {
+                    text: lvl;
+                    active: root.brightness == lvl;
+                    clicked => { root.brightness-changed(lvl); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "VELOCIDADE:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                for lvl in [0, 1, 2, 3, 4] : StepPill {
+                    text: lvl;
+                    enabled: root.supports-speed;
+                    active: root.speed == lvl;
+                    clicked => { root.speed-changed(lvl); }
+                }
+            }
+
+            StepPill {
+                pill-width: 96px;
+                text: root.multicolor ? "7-COLOR: ON" : "7-COLOR: OFF";
+                enabled: root.supports-multicolor;
+                active: root.multicolor;
+                clicked => { root.multicolor-toggled(!root.multicolor); }
+            }
+        }
+
+        // 3. Linha Contextual: Direção OU Surmount Preset OU Bancos Custom 1..3
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            height: 24px;
+
+            if (root.supports-direction) : HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "DIREÇÃO:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                StepPill {
+                    pill-width: 86px;
+                    text: root.dir-primary-label;
+                    active: root.direction == 0;
+                    clicked => { root.direction-changed(0); }
+                }
+                StepPill {
+                    pill-width: 86px;
+                    text: root.dir-reverse-label;
+                    active: root.direction == 1;
+                    clicked => { root.direction-changed(1); }
+                }
+            }
+
+            if (root.supports-zzcc) : HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "SURMOUNT PRESET:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                for idx in [0, 1, 2, 3] : StepPill {
+                    pill-width: 58px;
+                    text: "GRP " + (idx + 1);
+                    active: root.zzcc-mode == idx;
+                    clicked => { root.zzcc-changed(idx); }
+                }
+            }
+
+            if (root.is-custom-mode) : HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "BANCO:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                for b in [0, 1, 2] : StepPill {
+                    pill-width: 68px;
+                    text: "CUSTOM " + (b + 1);
+                    active: root.custom-bank == b;
+                    clicked => { root.custom-bank-selected(b); }
+                }
+                Rectangle { width: 8px; }
+                StepPill {
+                    pill-width: 84px;
+                    text: root.custom-eraser ? "BORRACHA" : "PINCEL";
+                    active: root.custom-eraser;
+                    clicked => { root.custom-eraser = !root.custom-eraser; }
+                }
+                StepPill {
+                    pill-width: 78px;
+                    text: "PINTAR ALL";
+                    clicked => { root.custom-fill-all(); }
+                }
+                StepPill {
+                    pill-width: 74px;
+                    text: "APAGAR ALL";
+                    clicked => { root.custom-clear-all(); }
+                }
+            }
+
+            if (!root.supports-direction && !root.supports-zzcc && !root.is-custom-mode) : Text {
+                text: root.supports-color ? "Clique na amostra de cor para abrir o seletor HSV contínuo." : "Este efeito utiliza paleta automática do firmware.";
+                font-family: Theme.mono-font;
+                font-size: 9px;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // 4. Paleta, Amostra HSV, #HEX, R/G/B e Aplicar
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
 
-            Text {
-                text: "MODO DE ILUMINAÇÃO:";
-                font-family: Theme.mono-font;
-                font-size: 10px;
-                font-weight: 700;
-                color: Theme.text-muted;
-                vertical-alignment: center;
-            }
-
-            // Tab Estático
+            // Amostra Atual -> abre Popover HSV sob demanda
             Rectangle {
-                width: 90px;
-                height: 26px;
+                width: 44px;
+                height: 24px;
                 border-radius: Theme.radius-sm;
-                background: root.active-mode == 0 ? Theme.surface-active : Theme.surface-raised;
-                border-color: root.active-mode == 0 ? Theme.border-light : Theme.border;
+                background: root.selected-color;
+                border-color: swatch-ta.has-hover ? Theme.text-primary : Theme.border-light;
                 border-width: 1px;
+                opacity: root.supports-color ? 1.0 : 0.35;
+
                 Text {
-                    text: "ESTÁTICO";
+                    text: "HSV";
                     font-family: Theme.mono-font;
-                    font-size: 9px;
-                    font-weight: 600;
-                    color: root.active-mode == 0 ? Theme.text-primary : Theme.text-secondary;
+                    font-size: 8px;
+                    font-weight: 700;
+                    color: #FFFFFF;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                 }
-                TouchArea {
-                    clicked => {
-                        root.active-mode = 0;
-                        root.mode-changed(0);
-                    }
+
+                swatch-ta := TouchArea {
+                    enabled: root.supports-color;
+                    clicked => { root.open-hsv-popover(); }
                 }
             }
 
-            // Tab Chuva (Rain)
+            for c in [#FF0000, #FF7A00, #FFFF00, #00FF00, #00FFFF, #0066FF, #B400FF, #FFFFFF] : ColorSwatch {
+                swatch-color: c;
+                enabled: root.supports-color;
+                is-selected: root.selected-color == c;
+                clicked => { root.swatch-clicked(c); }
+            }
+
+            Rectangle { width: 4px; }
+
+            InlineField {
+                field-width: 74px;
+                value <=> root.hex-text;
+                enabled: root.supports-color;
+                submitted(txt) => { root.hex-submitted(txt); }
+            }
+
+            InlineField {
+                field-width: 46px;
+                prefix: "R";
+                value <=> root.red-text;
+                enabled: root.supports-color;
+                submitted => { root.rgb-submitted(root.red-text, root.green-text, root.blue-text); }
+            }
+
+            InlineField {
+                field-width: 46px;
+                prefix: "G";
+                value <=> root.green-text;
+                enabled: root.supports-color;
+                submitted => { root.rgb-submitted(root.red-text, root.green-text, root.blue-text); }
+            }
+
+            InlineField {
+                field-width: 46px;
+                prefix: "B";
+                value <=> root.blue-text;
+                enabled: root.supports-color;
+                submitted => { root.rgb-submitted(root.red-text, root.green-text, root.blue-text); }
+            }
+
             Rectangle {
-                width: 90px;
-                height: 26px;
+                width: 74px;
+                height: 24px;
                 border-radius: Theme.radius-sm;
-                background: root.active-mode == 1 ? Theme.surface-active : Theme.surface-raised;
-                border-color: root.active-mode == 1 ? Theme.border-light : Theme.border;
-                border-width: 1px;
-                Text {
-                    text: "CHUVA (RAIN)";
-                    font-family: Theme.mono-font;
-                    font-size: 9px;
-                    font-weight: 600;
-                    color: root.active-mode == 1 ? Theme.text-primary : Theme.text-secondary;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                }
-                TouchArea {
-                    clicked => {
-                        root.active-mode = 1;
-                        root.mode-changed(1);
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            height: 1px;
-            background: Theme.border;
-        }
-
-        // Seção de Cores Rápidas
-        HorizontalLayout {
-            spacing: 12px;
-            alignment: start;
-
-            Text {
-                text: "PALETA RÁPIDA:";
-                font-family: Theme.mono-font;
-                font-size: 10px;
-                font-weight: 700;
-                color: Theme.text-muted;
-                vertical-alignment: center;
-            }
-
-            ColorSwatch {
-                swatch-color: #FF0000;
-                is-selected: root.selected-color == #FF0000;
-                clicked => {
-                    root.selected-color = #FF0000;
-                    root.color-selected(#FF0000);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #00FF00;
-                is-selected: root.selected-color == #00FF00;
-                clicked => {
-                    root.selected-color = #00FF00;
-                    root.color-selected(#00FF00);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #0000FF;
-                is-selected: root.selected-color == #0000FF;
-                clicked => {
-                    root.selected-color = #0000FF;
-                    root.color-selected(#0000FF);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #00FFFF;
-                is-selected: root.selected-color == #00FFFF;
-                clicked => {
-                    root.selected-color = #00FFFF;
-                    root.color-selected(#00FFFF);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #FFFF00;
-                is-selected: root.selected-color == #FFFF00;
-                clicked => {
-                    root.selected-color = #FFFF00;
-                    root.color-selected(#FFFF00);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #B400FF;
-                is-selected: root.selected-color == #B400FF;
-                clicked => {
-                    root.selected-color = #B400FF;
-                    root.color-selected(#B400FF);
-                }
-            }
-
-            ColorSwatch {
-                swatch-color: #FFFFFF;
-                is-selected: root.selected-color == #FFFFFF;
-                clicked => {
-                    root.selected-color = #FFFFFF;
-                    root.color-selected(#FFFFFF);
-                }
-            }
-
-            Rectangle { } // Spacer
-
-            // Botão Aplicar Cor
-            Rectangle {
-                width: 120px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: apply-touch.has-hover ? Theme.surface-hover : Theme.surface-active;
+                background: apply-ta.has-hover ? Theme.surface-hover : Theme.surface-active;
                 border-color: Theme.border-light;
                 border-width: 1px;
 
                 Text {
-                    text: "APLICAR COR";
+                    text: "APLICAR";
                     font-family: Theme.mono-font;
-                    font-size: 10px;
+                    font-size: 9px;
                     font-weight: 700;
                     color: Theme.text-primary;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                 }
 
-                apply-touch := TouchArea {
-                    clicked => {
-                        root.apply-clicked();
-                    }
+                apply-ta := TouchArea {
+                    clicked => { root.apply-clicked(); }
                 }
             }
         }

@@ -1,4 +1,4 @@
-use ajazz_protocol::{LightingMode, RgbColor};
+use ajazz_protocol::{LightingConfig, RgbColor, UserProfile};
 use serde::{Deserialize, Serialize};
 
 pub const IPC_PIPE_NAME: &str = r"\\.\pipe\ajazz-daemon";
@@ -14,13 +14,14 @@ pub enum IpcRequest {
         b: u8,
     },
     SetLighting {
-        mode: LightingMode,
-        brightness: u8,
-        speed: u8,
-        color: RgbColor,
+        config: LightingConfig,
     },
-    SetKeyMatrix {
+    SetCustomBank {
+        bank: u8,
         colors: Vec<RgbColor>,
+    },
+    SelectCustomBank {
+        bank: u8,
     },
     PlayGif {
         path: String,
@@ -43,8 +44,7 @@ pub enum IpcResponse {
     Status {
         device_connected: bool,
         device_name: String,
-        current_color: Option<RgbColor>,
-        current_mode: Option<LightingMode>,
+        profile: UserProfile,
         is_playing_gif: bool,
     },
     Pong,

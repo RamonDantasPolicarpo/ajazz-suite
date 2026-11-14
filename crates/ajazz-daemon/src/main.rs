@@ -1,6 +1,7 @@
 mod device_manager;
 mod gif_decoder;
 mod ipc;
+mod profile_store;
 
 use device_manager::{run_device_actor, DeviceCommand};
 use ipc::{IpcRequest, IpcResponse, IPC_PIPE_NAME};
@@ -103,17 +104,10 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     },
                 }
             }
-            Ok(IpcRequest::SetLighting {
-                mode,
-                brightness,
-                speed,
-                color,
-            }) => {
+            Ok(IpcRequest::SetLighting { config }) => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = cmd_tx
-                    .send(DeviceCommand::SetLighting(
-                        mode, brightness, speed, color, reply_tx,
-                    ))
+                    .send(DeviceCommand::SetLighting(config, reply_tx))
                     .await;
                 match reply_rx.await {
                     Ok(Ok(())) => IpcResponse::Ok {
@@ -125,22 +119,33 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     },
                 }
             }
-            Ok(IpcRequest::SetKeyMatrix { colors }) => {
-                let mut matrix = [ajazz_protocol::RgbColor::default(); ajazz_protocol::TOTAL_PHYSICAL_LEDS];
-                for (i, c) in colors.into_iter().enumerate() {
-                    if i < matrix.len() {
-                        matrix[i] = c;
-                    }
-                }
+            Ok(IpcRequest::SetCustomBank { bank, colors }) => {
                 let (reply_tx, reply_rx) = oneshot::channel();
-                let _ = cmd_tx.send(DeviceCommand::SetKeyMatrix(matrix, reply_tx)).await;
+                let _ = cmd_tx
+                    .send(DeviceCommand::SetCustomBank(bank, colors, reply_tx))
+                    .await;
                 match reply_rx.await {
                     Ok(Ok(())) => IpcResponse::Ok {
-                        message: "Matriz customizada aplicada com sucesso".into(),
+                        message: format!("Banco Custom {} atualizado", bank.min(2) + 1),
                     },
                     Ok(Err(err)) => IpcResponse::Error { error: err },
                     Err(_) => IpcResponse::Error {
-                        error: "Falha interna ao enviar matriz".into(),
+                        error: "Falha interna ao atualizar banco Custom".into(),
+                    },
+                }
+            }
+            Ok(IpcRequest::SelectCustomBank { bank }) => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = cmd_tx
+                    .send(DeviceCommand::SelectCustomBank(bank, reply_tx))
+                    .await;
+                match reply_rx.await {
+                    Ok(Ok(())) => IpcResponse::Ok {
+                        message: format!("Banco Custom {} selecionado", bank.min(2) + 1),
+                    },
+                    Ok(Err(err)) => IpcResponse::Error { error: err },
+                    Err(_) => IpcResponse::Error {
+                        error: "Falha interna ao selecionar banco Custom".into(),
                     },
                 }
             }
@@ -177,8 +182,7 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     Ok(st) => IpcResponse::Status {
                         device_connected: st.connected,
                         device_name: st.device_name,
-                        current_color: st.current_color,
-                        current_mode: st.current_mode,
+                        profile: st.profile,
                         is_playing_gif: st.is_playing_gif,
                     },
                     Err(_) => IpcResponse::Error {
