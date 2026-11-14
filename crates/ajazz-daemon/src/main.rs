@@ -1,4 +1,5 @@
 mod audio_capture;
+mod chattering;
 mod device_manager;
 mod gif_decoder;
 mod ipc;
@@ -274,11 +275,14 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = cmd_tx.send(DeviceCommand::GetMouseStatus(reply_tx)).await;
                 match reply_rx.await {
-                    Ok((mouse_connected, mouse_status, profile)) => IpcResponse::MouseStatus {
-                        mouse_connected,
-                        mouse_status,
-                        profile,
-                    },
+                    Ok((mouse_connected, mouse_status, profile, chattering)) => {
+                        IpcResponse::MouseStatus {
+                            mouse_connected,
+                            mouse_status,
+                            profile,
+                            chattering,
+                        }
+                    }
                     Err(_) => IpcResponse::Error {
                         error: "Falha ao consultar status do mouse".into(),
                     },
@@ -321,6 +325,30 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                     &cmd_tx,
                     DeviceCommand::StartMousePairing,
                     "Pareamento NearLink 2.4G iniciado no receptor",
+                )
+                .await
+            }
+            Ok(IpcRequest::UploadMouseMacros) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::UploadMouseMacros,
+                    "Macros gravadas no mouse AJ179 via 06 31",
+                )
+                .await
+            }
+            Ok(IpcRequest::SetChatteringConfig { config }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetChatteringConfig(config, tx),
+                    "Configuração do detector de Switch Chattering atualizada",
+                )
+                .await
+            }
+            Ok(IpcRequest::ResetChatteringStats) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::ResetChatteringStats,
+                    "Contadores de Switch Chattering zerados",
                 )
                 .await
             }

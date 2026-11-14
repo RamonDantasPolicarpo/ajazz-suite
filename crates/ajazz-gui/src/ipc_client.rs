@@ -1,4 +1,7 @@
-use ajazz_protocol::mouse::{MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus};
+use ajazz_protocol::mouse::{
+    ChatteringConfig, MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus,
+    SwitchChatteringSnapshot,
+};
 use ajazz_protocol::{
     GifCrop, KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
 };
@@ -61,6 +64,11 @@ pub enum IpcRequest {
     ResetMouseButtons,
     SyncMouseFromDevice,
     StartMousePairing,
+    UploadMouseMacros,
+    SetChatteringConfig {
+        config: ChatteringConfig,
+    },
+    ResetChatteringStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +90,8 @@ pub enum IpcResponse {
         mouse_connected: bool,
         mouse_status: Option<MouseStatus>,
         profile: MouseProfile,
+        #[serde(default)]
+        chattering: SwitchChatteringSnapshot,
     },
     Pong,
 }

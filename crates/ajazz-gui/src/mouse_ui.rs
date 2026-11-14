@@ -1,11 +1,13 @@
 use crate::ipc_client::IpcRequest;
-use crate::{keymap_ui, GuiState, MainWindow};
+use crate::{keymap_ui, GuiState, MainWindow, MouseChatterRowItem};
 use ajazz_protocol::mouse::{
     clamp_dpi, LiftOffDistance, MouseButtonAction, MouseButtonSlot, MouseConfig,
     MouseConnectionMode, MousePollingRate, MouseProfile, MouseStatus, ScrollDirection,
+    SwitchChatteringSnapshot, CHATTERING_THRESHOLD_MAX_MS, CHATTERING_THRESHOLD_MIN_MS,
     MOUSE_BUTTON_COUNT, MOUSE_DEBOUNCE_MAX_MS, MOUSE_DEBOUNCE_MIN_MS, MOUSE_MAX_DPI_STAGES,
+    MOUSE_MACRO_MAX_SLOTS,
 };
-use ajazz_protocol::{MediaKey, SystemKey, HID_KEY_CATALOG};
+use ajazz_protocol::{MacroDefinition, MediaKey, MouseButton, SystemKey, HID_KEY_CATALOG};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -65,6 +67,16 @@ pub fn mouse_action_label(action: MouseButtonAction) -> &'static str {
         MouseButtonAction::WheelDown => "Scroll Baixo",
         MouseButtonAction::DpiPlus => "DPI +",
         MouseButtonAction::DpiMinus => "DPI -",
+    }
+}
+
+pub fn slot_short_label_with_macros(slot: &MouseButtonSlot, macros: &[MacroDefinition]) -> String {
+    match slot {
+        MouseButtonSlot::Macro { index, .. } => macros
+            .get(usize::from(*index))
+            .map(|m| format!("Macro: {}", m.name))
+            .unwrap_or_else(|| format!("Macro #{}", index + 1)),
+        other => slot_short_label(other),
     }
 }
 
@@ -167,6 +179,22 @@ pub fn draft_button_from_ui(ui: &MainWindow) -> MouseButtonSlot {
             let idx = (ui.get_ms_btn_system_idx().max(0) as usize).min(SystemKey::ALL.len() - 1);
             MouseButtonSlot::System(SystemKey::ALL[idx])
         }
+        4 => {
+            let index = ui
+                .get_ms_btn_macro_idx()
+                .clamp(0, (MOUSE_MACRO_MAX_SLOTS - 1) as i32) as u8;
+            let loop_mode = ui.get_ms_btn_macro_mode().clamp(0, 2) as u8;
+            let loop_count = if loop_mode == 0 {
+                ui.get_ms_btn_macro_repeat().clamp(1, 99) as u8
+            } else {
+                0
+            };
+            MouseButtonSlot::Macro {
+                index,
+                loop_mode,
+                loop_count,
+            }
+        }
         _ => MouseButtonSlot::Disable,
     }
 }
@@ -183,13 +211,14 @@ pub fn update_left_click_warning(
 pub fn sync_selected_button_to_ui(
     ui: &MainWindow,
     buttons: &[MouseButtonSlot; MOUSE_BUTTON_COUNT],
+    macros: &[MacroDefinition],
     slot_idx: usize,
 ) {
     let idx = slot_idx.min(MOUSE_BUTTON_COUNT - 1);
     let slot = &buttons[idx];
     ui.set_ms_selected_slot(idx as i32);
     ui.set_ms_slot_title(SharedString::from(SLOT_TITLES[idx]));
-    ui.set_ms_slot_current_binding(SharedString::from(slot_short_label(slot)));
+    ui.set_ms_slot_current_binding(SharedString::from(slot_short_label_with_macros(slot, macros)));
     ui.set_ms_btn_capturing_key(false);
 
     match slot {
@@ -227,8 +256,18 @@ pub fn sync_selected_button_to_ui(
                 .unwrap_or(0);
             ui.set_ms_btn_system_idx(s_idx as i32);
         }
-        MouseButtonSlot::Disable | MouseButtonSlot::Macro { .. } | MouseButtonSlot::Raw(_) => {
+        MouseButtonSlot::Macro {
+            index,
+            loop_mode,
+            loop_count,
+        } => {
             ui.set_ms_btn_category(4);
+            ui.set_ms_btn_macro_idx(i32::from(*index).clamp(0, (MOUSE_MACRO_MAX_SLOTS - 1) as i32));
+            ui.set_ms_btn_macro_mode(i32::from(*loop_mode).clamp(0, 2));
+            ui.set_ms_btn_macro_repeat(i32::from(*loop_count).clamp(1, 99));
+        }
+        MouseButtonSlot::Disable | MouseButtonSlot::Raw(_) => {
+            ui.set_ms_btn_category(5);
         }
     }
 
@@ -283,10 +322,11 @@ pub fn merge_mouse_status(
 pub fn sync_button_labels_only(
     ui: &MainWindow,
     buttons: &[MouseButtonSlot; MOUSE_BUTTON_COUNT],
+    macros: &[MacroDefinition],
 ) {
     let labels: Vec<SharedString> = buttons
         .iter()
-        .map(|b| SharedString::from(slot_short_label(b)))
+        .map(|b| SharedString::from(slot_short_label_with_macros(b, macros)))
         .collect();
     ui.set_ms_button_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
     update_left_click_warning(ui, buttons);
@@ -295,10 +335,71 @@ pub fn sync_button_labels_only(
 pub fn sync_buttons_list_to_ui(
     ui: &MainWindow,
     buttons: &[MouseButtonSlot; MOUSE_BUTTON_COUNT],
+    macros: &[MacroDefinition],
 ) {
-    sync_button_labels_only(ui, buttons);
+    sync_button_labels_only(ui, buttons, macros);
     let current = ui.get_ms_selected_slot().max(0) as usize;
-    sync_selected_button_to_ui(ui, buttons, current);
+    sync_selected_button_to_ui(ui, buttons, macros, current);
+}
+
+fn physical_button_label(btn: MouseButton) -> &'static str {
+    match btn {
+        MouseButton::Left => "Botão Esquerdo",
+        MouseButton::Right => "Botão Direito",
+        MouseButton::Middle => "Botão Meio",
+        MouseButton::Back => "Lateral Voltar",
+        MouseButton::Forward => "Lateral Avançar",
+    }
+}
+
+pub fn sync_chattering_to_ui(ui: &MainWindow, snap: &SwitchChatteringSnapshot) {
+    ui.set_ms_chatter_enabled(snap.enabled);
+    ui.set_ms_chatter_threshold_ms(i32::from(snap.threshold_ms));
+    ui.set_ms_chatter_total(snap.total_chatter_events as i32);
+
+    let alert_text = if snap.total_chatter_events > 0 {
+        let btn = snap
+            .last_chatter_button
+            .map(physical_button_label)
+            .unwrap_or("Botão");
+        let ms = snap
+            .last_chatter_interval_ms
+            .map(|v| format!("{v} ms"))
+            .unwrap_or_else(|| "-- ms".into());
+        format!(
+            "Alerta: {} evento(s) de Switch Chattering detectado(s)! Último: {btn} ({ms})",
+            snap.total_chatter_events
+        )
+    } else if !snap.enabled {
+        "Monitor de Switch Chattering pausado pelo usuário.".into()
+    } else {
+        "Nenhum rebote anormal detectado nos switches físicos.".into()
+    };
+    ui.set_ms_chatter_alert_text(SharedString::from(alert_text));
+
+    let rows: Vec<MouseChatterRowItem> = snap
+        .per_button
+        .iter()
+        .map(|entry| MouseChatterRowItem {
+            button_name: SharedString::from(physical_button_label(entry.button)),
+            total_clicks: entry.total_clicks as i32,
+            chatter_count: entry.chatter_count as i32,
+            last_ms: SharedString::from(
+                entry
+                    .last_interval_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "--".into()),
+            ),
+            min_ms: SharedString::from(
+                entry
+                    .min_interval_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "--".into()),
+            ),
+            has_chatter: entry.chatter_count > 0,
+        })
+        .collect();
+    ui.set_ms_chatter_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
 }
 
 pub fn sync_config_to_ui(ui: &MainWindow, cfg: &MouseConfig, dirty: bool) {
@@ -656,7 +757,12 @@ pub fn register_mouse_callbacks(
         ui.on_ms_slot_selected(move |slot| {
             if let Some(ui) = ui_w.upgrade() {
                 let st = st_c.lock().unwrap();
-                sync_selected_button_to_ui(&ui, &st.profile.mouse.buttons, slot.max(0) as usize);
+                sync_selected_button_to_ui(
+                    &ui,
+                    &st.profile.mouse.buttons,
+                    &st.profile.macros,
+                    slot.max(0) as usize,
+                );
             }
         });
     }
@@ -738,6 +844,35 @@ pub fn register_mouse_callbacks(
     {
         let ui_w = ui.as_weak();
         let st_c = Arc::clone(state);
+        ui.on_ms_btn_macro_selected(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_ms_btn_macro_idx(idx.clamp(0, (MOUSE_MACRO_MAX_SLOTS - 1) as i32));
+                refresh_button_warning(&st_c, &ui);
+            }
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        let st_c = Arc::clone(state);
+        ui.on_ms_btn_macro_mode_selected(move |mode| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_ms_btn_macro_mode(mode.clamp(0, 2));
+                refresh_button_warning(&st_c, &ui);
+            }
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        ui.on_ms_btn_macro_repeat_step(move |delta| {
+            if let Some(ui) = ui_w.upgrade() {
+                let next = (ui.get_ms_btn_macro_repeat() + delta).clamp(1, 99);
+                ui.set_ms_btn_macro_repeat(next);
+            }
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        let st_c = Arc::clone(state);
         let tx_c = tx.clone();
         ui.on_ms_apply_button_clicked(move || {
             let Some(ui) = ui_w.upgrade() else {
@@ -755,8 +890,25 @@ pub fn register_mouse_callbacks(
                     ui.set_ms_feedback_is_error(true);
                     return;
                 }
+                if let MouseButtonSlot::Macro { index, .. } = assignment {
+                    let m_idx = usize::from(index);
+                    if m_idx >= st.profile.macros.len() {
+                        ui.set_ms_feedback_text(SharedString::from(
+                            "Selecione uma macro válida antes de aplicar no mouse.",
+                        ));
+                        ui.set_ms_feedback_is_error(true);
+                        return;
+                    }
+                    if st.profile.macros[m_idx].steps.is_empty() {
+                        ui.set_ms_feedback_text(SharedString::from(
+                            "A macro escolhida está vazia. Adicione passos no editor primeiro.",
+                        ));
+                        ui.set_ms_feedback_is_error(true);
+                        return;
+                    }
+                }
                 st.profile.mouse.buttons[slot] = assignment.clone();
-                sync_buttons_list_to_ui(&ui, &st.profile.mouse.buttons);
+                sync_buttons_list_to_ui(&ui, &st.profile.mouse.buttons, &st.profile.macros);
             }
             let _ = tx_c.send(IpcRequest::SetMouseButton {
                 slot: slot as u8,
@@ -773,10 +925,72 @@ pub fn register_mouse_callbacks(
                 let mut st = st_c.lock().unwrap();
                 st.profile.mouse.buttons = MouseButtonSlot::DEFAULT_FIVE;
                 if let Some(ui) = ui_w.upgrade() {
-                    sync_buttons_list_to_ui(&ui, &st.profile.mouse.buttons);
+                    sync_buttons_list_to_ui(&ui, &st.profile.mouse.buttons, &st.profile.macros);
                 }
             }
             let _ = tx_c.send(IpcRequest::ResetMouseButtons);
+        });
+    }
+
+    // Diagnóstico de Switch Chattering
+    {
+        let ui_w = ui.as_weak();
+        let st_c = Arc::clone(state);
+        let tx_c = tx.clone();
+        ui.on_ms_chatter_toggle_clicked(move || {
+            let mut cfg = {
+                let mut st = st_c.lock().unwrap();
+                st.profile.mouse.chattering.enabled = !st.profile.mouse.chattering.enabled;
+                st.chattering_snap.enabled = st.profile.mouse.chattering.enabled;
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_chattering_to_ui(&ui, &st.chattering_snap);
+                }
+                st.profile.mouse.chattering
+            };
+            cfg.normalize();
+            let _ = tx_c.send(IpcRequest::SetChatteringConfig { config: cfg });
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        let st_c = Arc::clone(state);
+        let tx_c = tx.clone();
+        ui.on_ms_chatter_threshold_step(move |delta| {
+            let cfg = {
+                let mut st = st_c.lock().unwrap();
+                let next = (i32::from(st.profile.mouse.chattering.threshold_ms) + delta).clamp(
+                    i32::from(CHATTERING_THRESHOLD_MIN_MS),
+                    i32::from(CHATTERING_THRESHOLD_MAX_MS),
+                ) as u16;
+                st.profile.mouse.chattering.threshold_ms = next;
+                st.profile.mouse.chattering.normalize();
+                st.chattering_snap.threshold_ms = st.profile.mouse.chattering.threshold_ms;
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_chattering_to_ui(&ui, &st.chattering_snap);
+                }
+                st.profile.mouse.chattering
+            };
+            let _ = tx_c.send(IpcRequest::SetChatteringConfig { config: cfg });
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        let st_c = Arc::clone(state);
+        let tx_c = tx.clone();
+        ui.on_ms_chatter_reset_clicked(move || {
+            {
+                let mut st = st_c.lock().unwrap();
+                let cfg = st.profile.mouse.chattering;
+                st.chattering_snap = SwitchChatteringSnapshot {
+                    enabled: cfg.enabled,
+                    threshold_ms: cfg.threshold_ms,
+                    ..Default::default()
+                };
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_chattering_to_ui(&ui, &st.chattering_snap);
+                }
+            }
+            let _ = tx_c.send(IpcRequest::ResetChatteringStats);
         });
     }
 }
@@ -840,5 +1054,26 @@ mod tests {
             serde_json::from_str(r#"{"SniperDpi":{"level_mask":1}}"#).unwrap();
         assert_eq!(migrated, MouseButtonSlot::Disable);
         assert_eq!(migrated.to_wire(), [0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn slot_short_label_with_macros_resolves_named_macro() {
+        let macros = vec![MacroDefinition {
+            id: "m1".into(),
+            name: "Ctrl+C".into(),
+            steps: vec![],
+        }];
+        let bound = MouseButtonSlot::Macro {
+            index: 0,
+            loop_mode: 0,
+            loop_count: 1,
+        };
+        assert_eq!(slot_short_label_with_macros(&bound, &macros), "Macro: Ctrl+C");
+        let missing = MouseButtonSlot::Macro {
+            index: 2,
+            loop_mode: 1,
+            loop_count: 0,
+        };
+        assert_eq!(slot_short_label_with_macros(&missing, &macros), "Macro #3");
     }
 }

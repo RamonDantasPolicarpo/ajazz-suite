@@ -15,8 +15,13 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
   - **Correções pós-validação no Mouse**:
     - `b690faa`: corrigido bug de polling periódico `MouseStatus` sobrescrevendo rascunhos de botões e DPI na GUI.
     - `6720984`: diagnosticado via `diagnosing-bugs` + `Kernel-Power` Event 506 + `AJAZZ Driver（W1）.exe` (`sub_4247b0` + `sub_415a80`): `[0x40, 0x01/0x02/0x04, 0x00, 0x00]` são **atalhos ACPI de Sistema (`SystemKey`: Power/Sleep/Wake)** via `UsagePage 0x01 / Usage 0x80`, não Sniper DPI (`215/216` em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no AJ179). `MouseButtonSlot::SniperDpi` substituído por `MouseButtonSlot::System(SystemKey)` (com migração segura de perfis legados `SniperDpi` -> `Disable`) e aba `Sistema` com avisos explícitos.
-  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA`, refresh periódico de `06 05` (15s) e persistência em `UserProfile.mouse`.
-  - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (2 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`). SVGs `shape_mouse_cima.svg` e `shape_mouse_lado.svg` adicionados na raiz para futura rodada visual (após **Grill Me**). Todos os 42 testes do workspace passam.
+  - **Macros no Mouse (`06 31`) e Detector de Switch Chattering (`Raw Input`)**:
+    - Protocolo `06 31` (`sub_430860` no `AJAZZ Driver（W1）.exe`) documentado em `docs/protocol/mouse_protocol.md` (tabela de 32 offsets `u16_le` `[0x00..0x3F]`, pre-delay no primeiro evento `10 ms`, máscaras `0x41/0x01` modificador vs `0x42/0x02` tecla normal vs `0x43/0x03` botão de mouse, pareamento automático de release, terminador `[10ms, 0x83, 0x01]` + 4 bytes zero, e envio em fatias de 59 bytes `06 31` + vínculo `06 12` `60 <idx> <modo> <qtd>`) e implementado em `crates/ajazz-protocol/src/mouse.rs` (`compile_mouse_macros_container`, `build_upload_mouse_macros_packets`, `Aj179MouseDevice::upload_macros`).
+    - Monitor passivo de **Switch Chattering** (`crates/ajazz-daemon/src/chattering.rs`) via Windows Raw Input (`HWND_MESSAGE` + `RIDEV_INPUTSINK`, zero CPU ocioso, zero alocações no hot path, ignora eventos simulados `h_device == 0`), com sensibilidade persistida em `MouseProfile.chattering` (padrão `45 ms`, `5..=150 ms`).
+    - **Interface Gráfica (`ajazz-gui`)**: após alinhamento via **Grill Me**, adicionada categoria `Macro` em `BOTÕES (5)` (reutilizando a biblioteca compartilhada + modos `N vezes`, `Até soltar`, `Alternar` e atalho para `Gerenciar Macros`) e sub-aba `DIAGNÓSTICO` com badge de alerta no cabeçalho, controles de sensibilidade/pausa/zerar e tabela ao vivo por switch físico.
+  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice`, `StartMousePairing`, `UploadMouseMacros`, `SetChatteringConfig` e `ResetChatteringStats` (`IpcResponse::MouseStatus` incluindo `SwitchChatteringSnapshot`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA`, refresh periódico de `06 05` (15s) e persistência em `UserProfile.mouse`.
+  - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (3 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`). SVGs `shape_mouse_cima.svg` e `shape_mouse_lado.svg` adicionados na raiz para futura rodada visual (após **Grill Me**).
+  - **Refinamentos de GIF Player (`9d2d67a`)**: enquadramento (`GifCrop` com modal pan/zoom) e velocidade (`AUTO` usando delay embutido + `1..30 FPS`) validados em hardware pelo usuário.
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -73,9 +78,11 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `6720984`: `fix(protocol,gui): reclassify 0x40 mouse codes as ACPI System Power/Sleep/Wake`
 - `f2d5833`: `fix(daemon,docs): poll mouse battery/status every 15s and record AJ179 validation`
 
+- `9d2d67a`: `feat: add GIF crop framing and AUTO/1-30 FPS speed control`
+
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. **Macros no Mouse (`06 31`) e Detector de Switch Chattering**: codificação/upload de macros para o AJ179 NL P (`06 31`) e diagnóstico ao vivo de `Switch Chattering`.
-2. **Melhorias Visuais na GUI (`ajazz-gui`)**: rodada obrigatória de **Grill Me** para integrar `shape_mouse_cima.svg` / `shape_mouse_lado.svg` e ajustes visuais finais junto dos controles das novas features.
+1. **Validação em Hardware (`AJ179 NL P`)**: testar gravação de macro (`06 31`) + disparo no botão (`06 12`, modos `N vezes` / `Até soltar` / `Alternar`) e acompanhar telemetria/alerta na sub-aba `DIAGNÓSTICO` (`Switch Chattering`).
+2. **Melhorias Visuais na GUI (`ajazz-gui`)**: rodada obrigatória de **Grill Me** para integrar `shape_mouse_cima.svg` / `shape_mouse_lado.svg` e ajustes visuais finais na interface.
