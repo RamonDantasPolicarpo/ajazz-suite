@@ -21,7 +21,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
   - **Layout do AK820 75%:** Grade física interativa com ~82 teclas e knob rotativo no topo direito.
   - **Controles de Iluminação:** Modos Estático e Chuva (Rain), paleta rápida de cores puras + botão "Aplicar Cor".
   - **Abas Integradas:** Sidebar vertical com abas para Teclado AK820, Mouse NearLink e Configurações/Daemon.
-- **Bloqueio/Aguardando:** Nenhum bloqueio. Pronto para escolher o próximo marco (cores por tecla estáticas, Mouse NearLink ou Switch Chattering).
+- **Bloqueio/Aguardando:** Nenhum bloqueio. Alinhamento completo (`/grill-with-docs`) concluído para paridade do módulo de iluminação do software oficial.
 
 ---
 
@@ -56,6 +56,6 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ## 4. Próximos Passos Imediatos
 
-1. Cores por tecla estáticas (pintura individual por tecla usando transação `0x01 -> 0x0B -> 0x02`, após validação no hardware e Grill Me na GUI).
-2. Engenharia reversa dos pacotes de telemetria de bateria e DPI do Mouse NearLink (`0x7768:0x642E`).
-3. Detecção de Switch Chattering em segundo plano no Daemon e alerta na GUI.
+1. Engenharia reversa estática dos payloads completos de `Opcode 0x06` (modos `1..18` e `30`, flag Multicolor, brilho, velocidade, direção, sub-variações) e teste de transação única (`0x01 -> 0x0B -> 0x02`) para o Modo 20 Custom.
+2. Implementar paridade completa do módulo de iluminação no `ajazz-protocol`, `ajazz-daemon` (com persistência de **User Profile** em JSON) e `ajazz-gui` (janela travada, 19 efeitos + Custom 3 bancos).
+3. Engenharia reversa das features de entrada/sistema (Keymap, Macros, Win Lock, Polling Rate), Mouse NearLink e Switch Chattering.

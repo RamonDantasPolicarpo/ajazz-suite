@@ -25,5 +25,21 @@ A estrutura de dados binária padronizada de tamanho fixo transmitida via barram
 _Avoid_: Pacote, mensagem, payload bruto.
 
 **Device Profile**:
-A definição estática das capacidades de um periférico suportado, incluindo Vendor ID (VID), Product ID (PID), mapa de comandos HID e layout físico.
-_Avoid_: Configuração, modelo, device spec.
+A definição estática das capacidades físicas de um periférico suportado, incluindo Vendor ID (VID), Product ID (PID), mapa de comandos HID e layout físico.
+_Avoid_: Configuração, modelo, device spec, perfil de usuário.
+
+**User Profile**:
+Um conjunto nomeado e persistente de preferências configuradas pelo usuário, incluindo o efeito de iluminação ativo, mapeamento de teclas e macros associados.
+_Avoid_: Device profile, preset, configuração global.
+
+**Lighting Effect**:
+Um modo de iluminação executado nativamente pelo microcontrolador do periférico com seus parâmetros configuráveis (cor, modo multicolorido, brilho, velocidade e direção).
+_Avoid_: Animação, efeito RGB, tema, modo de LED.
+
+**Keymap**:
+A tabela de atribuição lógica entre cada posição física de tecla (incluindo a camada secundária `Fn`) e a função ou código de entrada emitido pelo periférico.
+_Avoid_: Layout, bind, tecla customizada.
+
+**Macro**:
+Uma sequência cronológica gravada ou editada de pressionamentos, liberações e atrasos temporais atribuída a um acionamento de tecla ou botão.
+_Avoid_: Script, atalho, combo.

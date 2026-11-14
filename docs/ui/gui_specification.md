@@ -6,13 +6,12 @@ Este documento formaliza todas as decisões acordadas na rodada de alinhamento t
 
 ## 1. Diretrizes Visuais e Paradigma de Janela
 
-- **Dimensões:** Janela compacta e moderna (~900 x 600 px), com proporções equilibradas e foco em utilidade.
-- **Identidade Visual:** *Dark Mode* nativo elegante, minimalista (estética utilitária inspirada em ferramentas profissionais como Linear e Raycast), evitando saturações e clichês de estética "gamer pesada".
+- **Dimensões:** Janela compacta com **tamanho travado** (`min` = `max`, alvo inicial `980 x 680 px`, sem permitir redimensionamento ou maximização deformante e sem scroll).
+- **Identidade Visual:** *Dark Mode* nativo elegante, minimalista (estética utilitária em grafite fosco `#18181B`, sem degradês/neon nos LEDs virtuais, usando apenas bordas sólidas nítidas).
 - **Framework de Renderização:** **Slint** (binário Rust nativo, aceleração gráfica sem Chromium/WebViews, tempo de inicialização instantâneo).
-- **Tipografia:** `JetBrains Mono` com fallback para `ui-monospace, monospace`, garantindo alinhamento tabular preciso de valores (DPI, FPS, Bateria %, ms de debounce).
+- **Tipografia:** `JetBrains Mono` embutida, garantindo alinhamento tabular preciso de valores (RGB, `#HEX`, DPI, Bateria %, ms de debounce).
 - **Ciclo de Vida:**
-  - O botão de fechar (`X`) fecha a interface e desaloca todos os recursos gráficos da memória RAM.
-  - A interface reside no **System Tray** (bandeja do Windows), permitindo reabertura instantânea com clique duplo ou menu de contexto.
+  - Fechar no botão (`X`) encerra diretamente o processo da **GUI**, liberando 100% de RAM/GPU gráfica. *(System Tray adiado para após consolidação das funcionalidades principais.)*
   - O **Daemon** em segundo plano permanece rodando de forma headless (< 10 MB de RAM, 0% CPU em idle).
 
 ### 1.1 Tokens de Cores Monocromáticas (Grafite Neutro)
@@ -61,28 +60,24 @@ Barra lateral vertical (*Sidebar*) persistente à esquerda:
 
 ### 3.1 Layout Visual Interativo (75%)
 - Renderização vetorial precisa das ~82 teclas do layout físico 75% do AK820.
-- **Preview em Tempo Real:** Cada tecla exibe a cor RGB exata enviada ao teclado ou projetada quadro a quadro por uma animação/GIF.
-- **Diagnóstico Integrado de Switches (Chattering):**
-  - Teclas com detecção de repique/chattering recebem um contorno de destaque amarelo/alerta diretamente na tecla visual.
-  - *Tooltip* ao passar o mouse exibindo número de repiques anormais detectados e tempo de bounce (em ms), identificando switches físicos com defeito para troca *hot-swap*.
+- **Preview Estático e Custom:** Nos **19 Lighting Effects** nativos do firmware, a grade exibe indicação visual estática (bordas sólidas na cor selecionada ou padrão indicativo neutro quando *Multicolor* estiver ativo, mantendo 0% de sobrecarga de GPU). No **Modo 20 (Custom)**, cada uma das ~82 teclas exibe sua cor individual configurada e responde ao clique para pintar ou apagar. *(Simulação animada de efeitos na GUI poderá ser avaliada apenas após consolidação completa das features.)*
+- **Diagnóstico Integrado de Switches (Switch Chattering — fase futura):**
+  - Teclas com detecção de **Switch Chattering** recebem um contorno de destaque amarelo/alerta diretamente na tecla visual com *tooltip* detalhado.
 
 ### 3.2 Painel de Controle de Iluminação (Abaixo do Teclado)
-- **Modos de Iluminação:** Seletor entre **Estático**, **Chuva (Rain)** e **GIF Player**.
+- **Seletor de Lighting Effect:** Seleção entre todos os **19 modos nativos do firmware** (`1..18` e `30`) mais o **Modo 20 (Custom Per-Key Estático)**.
+- **Parâmetros Dinâmicos do Efeito:**
+  - Toggle **Multicolor / 7 Cores** vs **Cor Sólida** (conforme suporte de cada modo).
+  - Controles discretos de **Brilho (`0..4`)** e **Velocidade (`0..4`)**.
+  - Seletor de **Direção** (Esquerda / Direita) para os modos direcionais (`Wave`, `Traverse`, `Roll`, `Wave bar`, `Scan`) e sub-variação (`1..4`) para o modo `Surmount` (`17`).
 - **Seletor de Cores:**
-  - Paleta de atalhos rápidos com cores puras (Vermelho, Verde, Azul, Ciano, Amarelo, Magenta, Branco).
-  - Entrada de valor Hexadecimal (`#RRGGBB`) e seletor HSV contínuo.
-- **Sliders de Ajuste Fino:**
-  - Brilho (Níveis 1 a 5 / 0 a 4).
-  - Velocidade da animação (Níveis 1 a 5).
+  - Paleta de atalhos rápidos com cores puras + inputs numéricos inline (`R`, `G`, `B` e `#HEX`).
+  - Seletor HSV contínuo aberto sob demanda em *popover* ao clicar na amostra de cor atual, evitando poluir o painel compacto.
 
-### 3.3 Player de Animações / GIFs
-- **Importação:**
-  - Suporte completo a *Drag & Drop* direto do arquivo `.gif` sobre a grade de teclas.
-  - Botão tradicional de "Importar GIF" via explorador de arquivos.
-- **Ajustes de Projeção:**
-  - Slider de taxa de quadros (FPS): **Limitado a 25 FPS** para proteger o barramento USB e evitar instabilidades.
-  - Modo de corte/redimensionamento: **Fit** (ajustar matriz mantendo proporção) ou **Crop** (preenchimento total da grade 16x6).
-  - Prevenção de desgaste de Flash: O Daemon reproduz os quadros diretamente na RAM dos LEDs, sem emitir comandos de commit persistente em Flash (`0x02`).
+### 3.3 Modo Custom Estático por Tecla (Modo 20 / 3 Bancos)
+- Alternância entre os **3 bancos salváveis** (*Custom 1, 2 e 3*).
+- Ferramenta de **Pintar Tecla** (aplica a cor selecionada na tecla clicada) e **Apagar Tecla** (`#000000` / LED desligado).
+- Envio pontual por transação fechada (`0x01 -> 0x0B -> 0x02`), sem streaming contínuo, conforme [ADR-0002](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/adr/0002-no-continuous-0x0b-streaming.md). *(A antiga seção de GIF Player a 25 FPS está suspensa enquanto aguardamos investigação do modo `29` Áudio.)*
 
 ---
 
@@ -111,8 +106,8 @@ Barra lateral vertical (*Sidebar*) persistente à esquerda:
   - Botão de reiniciar serviço de conexão USB.
 - **Inicialização Automática:**
   - Checkbox para *"Iniciar com o Windows (Minimizado na Bandeja)"*, gravando na chave de registro padrão de inicialização de usuário (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
-- **Persistência de Dados:**
-  - As preferências de iluminação, último GIF carregado e perfis de DPI são gravados em arquivo local JSON padronizado em `%APPDATA%\ajazz-companion\config.json`.
+- **Persistência de Dados (`User Profile`):**
+  - As preferências do **User Profile** ativo (último **Lighting Effect**, cor, brilho, velocidade, direção, multicolor, os 3 bancos Custom e futuras configurações de mouse) são gravadas localmente em `%APPDATA%\ajazz-companion\config.json` para manter **Daemon** e **GUI** sincronizados ao reabrir.
 
 ---
 
