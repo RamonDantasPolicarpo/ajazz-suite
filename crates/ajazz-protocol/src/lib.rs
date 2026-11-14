@@ -33,8 +33,15 @@ pub const OPCODE_COMMIT_TRANSACTION: u8 = 0x02;
 pub const OPCODE_SET_LIGHTING: u8 = 0x06;
 pub const OPCODE_KEY_MATRIX_MAPPING: u8 = 0x07;
 pub const OPCODE_SET_CUSTOM_RGB_MATRIX: u8 = 0x0B;
+pub const OPCODE_SET_LIVE_MATRIX: u8 = 0x12;
 pub const OPCODE_HEARTBEAT_POLL: u8 = 0x1A;
 pub const OPCODE_GET_LED_MAPPING: u8 = 0x1B;
+
+/// Bytes de matriz RGB enviados por quadros voláteis (126 LEDs * 3 = 378 bytes, `sub_4b4310`).
+pub const LIVE_MATRIX_BYTES: usize = 126 * 3;
+
+/// Tabela oficial de escala de brilho para quadros em tempo real (`.rdata 0x682ec0`).
+pub const BRIGHTNESS_LUT: [u8; 5] = [0, 63, 126, 190, 255];
 
 #[derive(Error, Debug)]
 pub enum ProtocolError {
@@ -46,6 +53,9 @@ pub enum ProtocolError {
 
     #[error("Tamanho de payload inválido: esperado {expected}, recebido {received}")]
     InvalidPayloadSize { expected: usize, received: usize },
+
+    #[error("Firmware rejeitou comando 0x{opcode:02X} com status 0x{status:02X}")]
+    CommandRejected { opcode: u8, status: u8 },
 }
 
 /// Direção da animação de iluminação (`Fx` no protocolo oficial).
@@ -278,6 +288,19 @@ pub struct LightingConfig {
     pub custom_group: u8,
 }
 
+impl LightingConfig {
+    /// Garante limites válidos e desativa flags incompatíveis com as capacidades do modo.
+    pub fn normalize(&mut self) {
+        self.brightness = self.brightness.min(4);
+        self.speed = self.speed.min(4);
+        self.zzcc_mode = self.zzcc_mode.min(3);
+        self.custom_group = self.custom_group.min(2);
+        if !self.mode.capabilities().supports_multicolor {
+            self.multicolor = false;
+        }
+    }
+}
+
 impl Default for LightingConfig {
     fn default() -> Self {
         Self {
@@ -314,10 +337,7 @@ impl Default for UserProfile {
 impl UserProfile {
     /// Normaliza os vetores dos bancos Custom para exatamente `TOTAL_PHYSICAL_LEDS`.
     pub fn normalize(&mut self) {
-        self.lighting.brightness = self.lighting.brightness.min(4);
-        self.lighting.speed = self.lighting.speed.min(4);
-        self.lighting.zzcc_mode = self.lighting.zzcc_mode.min(3);
-        self.lighting.custom_group = self.lighting.custom_group.min(2);
+        self.lighting.normalize();
         for bank in &mut self.custom_banks {
             bank.resize(TOTAL_PHYSICAL_LEDS, RgbColor::default());
         }
@@ -418,26 +438,40 @@ pub fn build_commit_transaction_packet() -> [u8; HID_REPORT_PAYLOAD_SIZE] {
     buf
 }
 
+/// Escala um `RgbColor` pela tabela de brilho oficial `[0, 63, 126, 190, 255]` (`sub_4b4310`).
+#[inline]
+pub fn scale_color_by_brightness(color: RgbColor, brightness: u8) -> RgbColor {
+    let alpha = BRIGHTNESS_LUT[brightness.min(4) as usize] as u16;
+    RgbColor::new(
+        (((color.r as u16) * alpha) >> 8) as u8,
+        (((color.g as u16) * alpha) >> 8) as u8,
+        (((color.b as u16) * alpha) >> 8) as u8,
+    )
+}
+
 /// Constrói o pacote completo de configuração de iluminação (`Opcode 0x06`, bloco `0x1D` bytes)
 /// conforme extraído de `sub_492b30` / `LightInfo` / `SystemStages`.
 pub fn build_lighting_packet_config(config: &LightingConfig) -> [u8; HID_REPORT_PAYLOAD_SIZE] {
+    let mut cfg = *config;
+    cfg.normalize();
+
     let mut buf = [0u8; HID_REPORT_PAYLOAD_SIZE];
     buf[0] = REPORT_ID_COMMAND;
     buf[3] = OPCODE_SET_LIGHTING;
     buf[4] = 0x1D; // 29 bytes
-    buf[9] = config.mode.wire_id();
-    buf[10] = config.brightness.min(4);
-    buf[11] = 4u8.saturating_sub(config.speed.min(4)); // sub_492b30: 4 - Speed
-    buf[12] = config.direction as u8;
-    buf[13] = u8::from(config.multicolor);
-    buf[14] = config.color.r;
-    buf[15] = config.color.g;
-    buf[16] = config.color.b;
-    buf[26] = config.zzcc_mode.min(3);
-    // SystemStages seguros de `Keyboard.json` para não corromper taxa de polling / WinFlag
-    buf[27] = 1; // Key6Flag
-    buf[28] = 16; // Repeat (0x10)
-    buf[33] = config.custom_group.min(2);
+    buf[9] = cfg.mode.wire_id();
+    buf[10] = cfg.brightness;
+    buf[11] = 4u8.saturating_sub(cfg.speed); // sub_492b30: 4 - Speed
+    buf[12] = cfg.direction as u8;
+    buf[13] = u8::from(cfg.multicolor);
+    buf[14] = cfg.color.r;
+    buf[15] = cfg.color.g;
+    buf[16] = cfg.color.b;
+    buf[26] = cfg.zzcc_mode;
+    // SystemStages seguros de `sub_492b30` / `ak820_red.pcapng` frame 117 (`WFlag=0` evita inversão WASD<->Setas)
+    buf[27] = 0; // WFlag
+    buf[28] = 0xFF; // Key6Flag
+    buf[33] = cfg.custom_group;
 
     let sum = calculate_checksum(&buf);
     buf[1] = (sum & 0xFF) as u8;
@@ -474,6 +508,38 @@ pub fn build_lighting_packet(
     buf
 }
 
+fn build_chunked_matrix_packets(
+    opcode: u8,
+    wire_base: usize,
+    raw_rgb: &[u8],
+) -> [[u8; HID_REPORT_PAYLOAD_SIZE]; 7] {
+    let mut packets = [[0u8; HID_REPORT_PAYLOAD_SIZE]; 7];
+    const CHUNK_SIZE: usize = 56;
+    let mut chunk_offset = 0usize;
+
+    for pkt in packets.iter_mut() {
+        let chunk_len = raw_rgb.len().saturating_sub(chunk_offset).min(CHUNK_SIZE);
+        let wire_offset = wire_base + chunk_offset;
+        pkt[0] = REPORT_ID_COMMAND;
+        pkt[3] = opcode;
+        pkt[4] = chunk_len as u8;
+        pkt[5] = (wire_offset & 0xFF) as u8;
+        pkt[6] = ((wire_offset >> 8) & 0xFF) as u8;
+        pkt[7] = 0x00;
+        if chunk_len > 0 {
+            pkt[8..8 + chunk_len].copy_from_slice(&raw_rgb[chunk_offset..chunk_offset + chunk_len]);
+        }
+
+        let sum = calculate_checksum(pkt);
+        pkt[1] = (sum & 0xFF) as u8;
+        pkt[2] = ((sum >> 8) & 0xFF) as u8;
+
+        chunk_offset += chunk_len;
+    }
+
+    packets
+}
+
 /// Constrói os 7 pacotes HID (Opcode 0x0B) para um banco Custom específico (`custom_group` `0..=2`).
 /// Cada banco tem stride de `0x200` (512 bytes), gravando 384 bytes (128 LEDs x RGB).
 pub fn build_custom_matrix_packets_for_bank(
@@ -488,29 +554,23 @@ pub fn build_custom_matrix_packets_for_bank(
     }
 
     let bank_base = (custom_group.min(2) as usize) * 0x200;
-    let mut packets = [[0u8; HID_REPORT_PAYLOAD_SIZE]; 7];
-    const CHUNK_SIZE: usize = 56;
-    let mut chunk_offset = 0usize;
+    build_chunked_matrix_packets(OPCODE_SET_CUSTOM_RGB_MATRIX, bank_base, &raw_rgb)
+}
 
-    for pkt in packets.iter_mut() {
-        let chunk_len = (raw_rgb.len() - chunk_offset).min(CHUNK_SIZE);
-        let wire_offset = bank_base + chunk_offset;
-        pkt[0] = REPORT_ID_COMMAND;
-        pkt[3] = OPCODE_SET_CUSTOM_RGB_MATRIX;
-        pkt[4] = chunk_len as u8;
-        pkt[5] = (wire_offset & 0xFF) as u8;
-        pkt[6] = ((wire_offset >> 8) & 0xFF) as u8;
-        pkt[7] = 0x00;
-        pkt[8..8 + chunk_len].copy_from_slice(&raw_rgb[chunk_offset..chunk_offset + chunk_len]);
-
-        let sum = calculate_checksum(pkt);
-        pkt[1] = (sum & 0xFF) as u8;
-        pkt[2] = ((sum >> 8) & 0xFF) as u8;
-
-        chunk_offset += chunk_len;
+/// Constrói os 7 pacotes HID voláteis (Opcode 0x12) para streaming em tempo real (378 bytes / 126 LEDs),
+/// sem transações de gravação em flash (`0x01`/`0x02`), escalados por brilho conforme `sub_4b4310`.
+pub fn build_live_matrix_packets(
+    colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+    brightness: u8,
+) -> [[u8; HID_REPORT_PAYLOAD_SIZE]; 7] {
+    let mut raw_rgb = [0u8; LIVE_MATRIX_BYTES];
+    for (i, &c) in colors.iter().take(126).enumerate() {
+        let scaled = scale_color_by_brightness(c, brightness);
+        raw_rgb[i * 3] = scaled.r;
+        raw_rgb[i * 3 + 1] = scaled.g;
+        raw_rgb[i * 3 + 2] = scaled.b;
     }
-
-    packets
+    build_chunked_matrix_packets(OPCODE_SET_LIVE_MATRIX, 0, &raw_rgb)
 }
 
 /// Constrói os 7 pacotes HID (Opcode 0x0B) para o banco Custom 0 (384 bytes / offset 0).
@@ -554,16 +614,43 @@ impl Ak820Device {
         self.device.write(data).map_err(ProtocolError::from)
     }
 
+    /// Escreve um pacote de 64 bytes e lê o ACK correspondente na interface HID (`sub_4781c0`).
+    fn write_packet_with_ack(
+        &mut self,
+        pkt: &[u8; HID_REPORT_PAYLOAD_SIZE],
+        timeout_ms: i32,
+    ) -> Result<(), ProtocolError> {
+        self.device.write(pkt)?;
+        let expected_opcode = pkt[3];
+        let mut ack = [0u8; HID_REPORT_PAYLOAD_SIZE];
+        for _ in 0..3 {
+            let read = self.device.read_timeout(&mut ack, timeout_ms)?;
+            if read == 0 {
+                break;
+            }
+            if read >= 8 && ack[3] == expected_opcode {
+                if ack[7] == 0xFF || ack[7] == 0xFE {
+                    return Err(ProtocolError::CommandRejected {
+                        opcode: expected_opcode,
+                        status: ack[7],
+                    });
+                }
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     /// Envia uma sequência transacional completa de alteração de iluminação usando `LightingConfig`.
     pub fn apply_lighting(&mut self, config: &LightingConfig) -> Result<(), ProtocolError> {
         let p_begin = build_begin_transaction_packet();
-        self.device.write(&p_begin)?;
+        self.write_packet_with_ack(&p_begin, 300)?;
 
         let p_light = build_lighting_packet_config(config);
-        self.device.write(&p_light)?;
+        self.write_packet_with_ack(&p_light, 300)?;
 
         let p_commit = build_commit_transaction_packet();
-        self.device.write(&p_commit)?;
+        self.write_packet_with_ack(&p_commit, 300)?;
 
         Ok(())
     }
@@ -604,7 +691,9 @@ impl Ak820Device {
         })
     }
 
-    /// Grava um banco Custom (`0..=2`) em modo estático por tecla via transação única fechada (`0x01` -> `0x06` -> `0x0B` -> `0x02`).
+    /// Grava um banco Custom (`0..=2`) em modo estático por tecla conforme `sub_492b30` + `sub_49f280`:
+    /// primeiro fecha a transação `0x01 -> 0x06 -> 0x02` com `mode = Custom` (`multicolor = false`) e em seguida
+    /// envia os 7 pacotes `Opcode 0x0B` aguardando ACK HID por pacote (`sub_4781c0`).
     pub fn apply_custom_bank(
         &mut self,
         config: &LightingConfig,
@@ -612,20 +701,27 @@ impl Ak820Device {
     ) -> Result<(), ProtocolError> {
         let mut custom_cfg = *config;
         custom_cfg.mode = LightingMode::Custom;
+        custom_cfg.normalize();
 
-        let p_begin = build_begin_transaction_packet();
-        self.device.write(&p_begin)?;
-
-        let p_light = build_lighting_packet_config(&custom_cfg);
-        self.device.write(&p_light)?;
+        self.apply_lighting(&custom_cfg)?;
 
         let packets = build_custom_matrix_packets_for_bank(custom_cfg.custom_group, colors);
         for pkt in &packets {
-            self.device.write(pkt)?;
+            self.write_packet_with_ack(pkt, 300)?;
         }
+        Ok(())
+    }
 
-        let p_commit = build_commit_transaction_packet();
-        self.device.write(&p_commit)?;
+    /// Envia um quadro volátil em tempo real via `Opcode 0x12` (Modo Capture / Screen Sync), sem gravar na flash.
+    pub fn send_live_matrix(
+        &mut self,
+        colors: &[RgbColor; TOTAL_PHYSICAL_LEDS],
+        brightness: u8,
+    ) -> Result<(), ProtocolError> {
+        let packets = build_live_matrix_packets(colors, brightness);
+        for pkt in &packets {
+            self.write_packet_with_ack(pkt, 80)?;
+        }
         Ok(())
     }
 
@@ -636,7 +732,7 @@ impl Ak820Device {
     ) -> Result<(), ProtocolError> {
         let packets = build_custom_matrix_packets_for_bank(0, colors);
         for pkt in &packets {
-            self.device.write(pkt)?;
+            self.write_packet_with_ack(pkt, 300)?;
         }
         Ok(())
     }
@@ -787,8 +883,8 @@ mod tests {
         assert_eq!(p[13], 1);
         assert_eq!((p[14], p[15], p[16]), (0x10, 0x20, 0x30));
         assert_eq!(p[26], 2);
-        assert_eq!(p[27], 1);
-        assert_eq!(p[28], 16);
+        assert_eq!(p[27], 0);
+        assert_eq!(p[28], 0xFF);
         assert_eq!(p[33], 2);
         let expected_sum = calculate_checksum(&p);
         assert_eq!((p[1] as u16) | ((p[2] as u16) << 8), expected_sum);

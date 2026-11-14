@@ -2,6 +2,7 @@ mod device_manager;
 mod gif_decoder;
 mod ipc;
 mod profile_store;
+mod screen_capture;
 
 use device_manager::{run_device_actor, DeviceCommand};
 use ipc::{IpcRequest, IpcResponse, IPC_PIPE_NAME};

@@ -107,7 +107,7 @@ pub const AK820_KEY_LAYOUT: [KeyLayoutPos; VISIBLE_KEYS_COUNT] = [
     KeyPos { name: "Space", light_id: 108, phys_led: 45, norm_x: 0.2416, norm_y: 0.9623 },
     KeyPos { name: "RAlt", light_id: 109, phys_led: 77, norm_x: 0.6465, norm_y: 0.9623 },
     KeyPos { name: "Fn", light_id: 110, phys_led: 85, norm_x: 0.7114, norm_y: 0.9623 },
-    KeyPos { name: "RCtrl", light_id: 112, phys_led: 101, norm_x: 0.7763, norm_y: 0.9623 },
+    KeyPos { name: "RCtrl", light_id: 112, phys_led: 93, norm_x: 0.7763, norm_y: 0.9623 },
     KeyPos { name: "Left", light_id: 113, phys_led: 109, norm_x: 0.8568, norm_y: 1.0 },
     KeyPos { name: "Down", light_id: 114, phys_led: 117, norm_x: 0.9217, norm_y: 1.0 },
     KeyPos { name: "Right", light_id: 115, phys_led: 125, norm_x: 0.9866, norm_y: 1.0 },
