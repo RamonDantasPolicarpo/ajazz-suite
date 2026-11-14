@@ -4,7 +4,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Paridade de SystemStages (0x05/0x06), Remapeamento (0x03/0x1B/0x07/0x09) e Macros (0x15) IMPLEMENTADA
+## 1. Posição Atual: Paridade de SystemStages (0x05/0x06), Remapeamento (0x03/0x1B/0x07/0x09) e Macros (0x15) VALIDADA EM HARDWARE
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -16,7 +16,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - **Interface Gráfica Nativa (`ajazz-gui`):**
   - Sub-abas em `AK820 RGB` (`Iluminação`, `Remapear Teclas`, `Macros`, `Sistema`) mantendo o teclado 82 teclas fixo no topo (`980x680` travado) com destaque de seleção e ponto indicador de remapeamento.
   - Editor de Keymap por categorias + captura de tecla física (`FocusScope`), Editor/Gravador híbrido de Macros ao vivo + manual e sub-aba Sistema com alerta visual para `WFlag` (`WASD ↔ Setas`) e botão `Sincronizar do Teclado (0x05)`.
-- **Pendente de Validação Física:** Smoke test no teclado físico AK820 para testar remapeamento, gravação de macro (`0x15`), `WinLock` / `PollingRate` e `Sincronizar do Teclado (0x05)`.
+- **Validação de Hardware Concluída:** Smoke test físico aprovado pelo usuário no AK820 — `WinLock`, `WASD ↔ Setas`, `Polling Rate`, remapeamento de teclas (`0x09`), gravação/vinculação de macros (`0x15`) e `Sincronizar do Teclado (0x05)` funcionando corretamente.
 
 ---
 
@@ -48,12 +48,12 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `112df72`: `chore: disable gif streaming due to hardware flicker and remove gif tab from gui`
 - `5cac230`: `docs: align domain glossary, adr-0002 and lighting parity requirements`
 - `3c5ed87`: paridade completa do subsistema de iluminação AK820 (19 efeitos + Custom 3 bancos + Capture `0x12` + persistência JSON + GUI travada).
-- `[atual]`: paridade de `SystemStages` (`0x05`/`0x06`), Remapeamento de Teclas (`0x03`/`0x1B`/`0x07`/`0x09`) e Macros (`0x15` `0x55AA`) em todo o workspace (`protocol`, `daemon`, `gui`).
+- `ab78f2f`: `feat: implement AK820 SystemStages, keymap remapping and macro editor` (paridade completa do teclado AK820: iluminação + sistema + keymap + macros validados no hardware).
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. Validar fisicamente no AK820: `WinLock`, `WFlag`, `PollingRate`, remapeamento de tecla (`0x09`), gravação de macro (`0x15`) e `Sincronizar do Teclado (0x05)`.
-2. Reavaliar **GIF Player** e **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (comprovadamente seguro em RAM e sem piscada, substituindo o `0x0B` antigo).
-3. Próximas frentes opcionais: simulação animada de efeitos na GUI, módulo **Mouse NearLink** (`0x7768:0x642E`), ou **Switch Chattering**.
+1. Reavaliar e reativar **GIF Player** e implementar **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (RAM segura, sem piscada nem desgaste de Flash).
+2. Adicionar simulação animada em tempo real dos efeitos RGB na própria **GUI** (`KeyboardView`).
+3. Escolher a próxima frente de expansão: engenharia reversa do **Mouse NearLink** (`0x7768:0x642E`) ou detector de **Switch Chattering** + filtros de diagnóstico.
