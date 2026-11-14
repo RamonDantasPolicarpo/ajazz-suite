@@ -100,15 +100,15 @@ Quando `payload[3] == 0x06` (bloco de `0x1D` = 29 bytes extraído de `LightInfo`
 | `0x10` | 1 byte | `0x00..0xFF` | **Canal Azul (`Blue`)** da cor primária. |
 | `0x11..0x19`| 9 bytes | `00 ... 00` | Zerado (`arg_ffffffa5..arg_ffffffad`). |
 | `0x1A` | 1 byte | `0x00..0x03` | **`ZZCCLedMode`**: Sub-modo (`Group 1..4`) exclusivo do modo `17` (Surmount). |
-| `0x1B` | 1 byte | `0x01` | **`SystemStages.Key6Flag`**: Padrão `1` (6-key/NKRO flag em `Keyboard.json`). |
-| `0x1C` | 1 byte | `0x10` (ou `0xFF`) | **`SystemStages.Repeat`**: Padrão `16` (`0x10`) em `Keyboard.json` (observado `0xFF` em captura USB inicial). |
-| `0x1D` | 1 byte | `0x00` | **`SystemStages.PollingRate`**: Padrão `0`. |
-| `0x1E` | 1 byte | `0x00` | **`SystemStages.RepeatDelay`**: Padrão `0`. |
+| `0x1B` | 1 byte | `0x00` | **`SystemStages.WFlag`**: **`0` = WASD normal**, `1` = WASD ↔ Setas invertido (`sub_44ab70 +8`, `sub_492b30`). |
+| `0x1C` | 1 byte | `0xFF` (ou `0x01`) | **`SystemStages.Key6Flag`**: `0xFF` observado no Frame 117 de `ak820_red.pcapng`; padrão `1` em `Keyboard.json` (`sub_44ab70 +4`). |
+| `0x1D` | 1 byte | `0x00` | **`SystemStages.WinFlag`**: Trava tecla Win (`sub_44ab70 +10`). |
+| `0x1E` | 1 byte | `0x00` | **`SystemStages.PollingRate`**: Padrão `0` (`sub_44ab70 +6`). |
 | `0x1F..0x20`| 2 bytes | `00 00` | Reservado (`0x00`). |
 | `0x21` | 1 byte | `0x00..0x02` | **`CustomGroup`**: Banco ativo (`0`, `1` ou `2` -> Custom 1..3) para o Modo `0x14`. |
 | `0x22` | 1 byte | `0x00` | Reservado (`0x00`). |
-| `0x23` | 1 byte | `0x00` | **`SystemStages.WFlag`**: Padrão `0`. |
-| `0x24` | 1 byte | `0x00` | **`SystemStages.WinFlag`**: Padrão `0` (trava tecla Win). |
+| `0x23` | 1 byte | `0x00` | **`SystemStages.MacMode`**: Padrão `0` (`sub_44ab70 +12`). |
+| `0x24` | 1 byte | `0x00` | **`SystemStages.Wheel`**: Padrão `0` (`sub_44ab70 +14`). |
 | `0x25..0x3F`| 27 bytes| `00 ... 00` | Preenchimento com zeros (Padding). |
 
 #### Tabela Completa de Modos de Iluminação (AK820 Array 0 + Capacidades de UI `sub_415010`)
@@ -134,14 +134,14 @@ Quando `payload[3] == 0x06` (bloco de `0x1D` = 29 bytes extraído de `LightInfo`
 | `17` | `0x11` | **Surmount** (`zzcc`) | Não | Fixo Multi | Sim | Sim | Não | `ZZCCLedMode` `0..=3` |
 | `18` | `0x12` | **Speed** (`speed`) | Não | Fixo Multi | Sim | Não | Outside / Inside (`1`/`0`) | — |
 | `20` | `0x14` | **Custom** (`custom`) | Sim (Pincel) | Não | Sim | Não | Não | `CustomGroup` `0..=2` + `0x0B` |
-| `29` | `0xFE` | **Audio wave** (`audiorecord`) | Sim | Sim | Sim | Não | Não | *Oculto — pesquisa futura* |
-| `30` | `0xFE` | **Capture** (`capturecolor`) | Não | Não | Sim | Não | Não | Streaming/Tela (`0xFE`) |
+| `29` | `0xFE` | **Audio wave** (`audiorecord`) | Sim | Sim | Sim | Não | Não | Streaming via `Opcode 0x12` (*pesquisa futura*) |
+| `30` | `0xFE` | **Capture** (`capturecolor`) | Não | Não | Sim | Não | Não | Streaming tela → teclado via **`Opcode 0x12`** (volátil) |
 
 ---
 
-### 2.5 Sequência Transacional Obrigatória para Alteração de Cor / Modo
+### 2.5 Sequência Transacional Obrigatória e ACK HID (`sub_4781c0`)
 
-Para alterar o modo ou cor do teclado com sucesso, o host deve disparar exatamente a sequência de 3 pacotes:
+Para alterar o modo ou cor do teclado com sucesso, o host deve disparar a sequência de 3 pacotes lendo o **HID IN ACK (64 bytes)** após cada pacote (`resp[3] == opcode && resp[7] != 0xFF && resp[7] != 0xFE`):
 
 1. **Pacote 1 (Begin Transaction):**
    ```
@@ -158,27 +158,34 @@ Para alterar o modo ou cor do teclado com sucesso, o host deve disparar exatamen
 
 ---
 
-### 2.6 Matriz de Iluminação Customizada Individual (`Opcode 0x0B` — `sub_47a890`)
+### 2.6 Matriz de Iluminação Customizada Individual (`Opcode 0x0B` — `sub_49ef80`, `sub_49f280`, `sub_47a890`)
 
 Para controlar a cor individual de cada tecla em modo estático por banco:
 
-1. **Ativação de Modo**: O teclado é comutado para o **Modo 20 (`0x14` / Custom)** enviando `Opcode 0x06` com `payload[9] = 0x14` e `payload[33] = CustomGroup` (`0`, `1` ou `2` correspondendo a Custom 1..3).
-2. **Buffer de Matriz e Bancos**: Cada banco possui stride de `0x200` (512 bytes) endereçando até 128 LEDs físicos × 3 canais (R, G, B) = **384 bytes úteis** (`sub_49f280` passa `offset_base = CustomGroup * 0x200`).
+1. **Ativação de Modo**: Primeiro envia e fecha a transação `0x01 -> 0x06 -> 0x02` com `payload[9] = 0x14`, `payload[13] = 0x00` (`multicolor = false`) e `payload[33] = CustomGroup` (`0..=2`). Em seguida, envia os 7 pacotes `Opcode 0x0B` fora de `0x01..0x02`, aguardando ACK HID (`sub_4781c0`) após cada pacote.
+2. **Override de Mapeamento (`sub_49ef80`)**: Para `light_id = 0x70` (`112`, `RCtrl`), o firmware usa `phys_led = 0x5D` (`93`) em vez do valor bruto da tabela (`101`).
+3. **Buffer de Matriz e Bancos**: Cada banco possui stride de `0x200` (512 bytes) endereçando LEDs físicos × 3 canais (R, G, B):
    - Banco 0 (Custom 1): offset base `0x0000` (`0`)
    - Banco 1 (Custom 2): offset base `0x0200` (`512`)
    - Banco 2 (Custom 3): offset base `0x0400` (`1024`)
-3. **Fragmentação em Chunks de 56 Bytes**:
-   O payload de cada pacote é estruturado como:
+4. **Fragmentação em Chunks de 56 Bytes**:
    - `payload[0] = 0x04` (Report ID)
    - `payload[1..2] = Checksum LE (soma de payload[3..64])`
    - `payload[3] = 0x0B` (Opcode)
-   - `payload[4] = chunk_len` (56 para chunks 0..5, 48 para chunk 6 no total de 384 bytes)
+   - `payload[4] = chunk_len` (56 para chunks 0..5, 48 ou 42 no chunk 6)
    - `payload[5..6] = offset LE` (`(custom_group * 0x200) + chunk_offset`)
    - `payload[7] = 0x00` (Reservado)
    - `payload[8..8+chunk_len] = dados RGB brutos`
 
-### 2.7 Limitação de Streaming e Desgaste de Memória Flash (`Opcode 0x0B`)
+### 2.7 Streaming Volátil em Tempo Real (`Opcode 0x12` — `sub_47ab30` / `sub_4b4310` / `sub_492ee0`)
+
+Canal volátil dedicado aos modos em tempo real (**Capture** `30 -> 0xFE` e **Audio** `29 -> 0xFE`), **sem** transações `0x01`/`0x02`:
+
+1. **Ativação Inicial**: Envia uma única vez `0x01 -> 0x06(mode=0xFE, brightness=0..4) -> 0x02`.
+2. **Escala de Brilho (`sub_4b4310` / `.rdata 0x682ec0`)**: O host escala cada canal via `(c * BRIGHTNESS_LUT[brightness]) >> 8` com `BRIGHTNESS_LUT = [0, 63, 126, 190, 255]`.
+3. **Pacotes `Opcode 0x12`**: 7 pacotes de 64 bytes totalizando `378` bytes (`126` LEDs × 3, chunks `56×6 + 42`) com `offset LE` a partir de `0x0000` (`0, 56, ..., 336`), sem multiplicador de banco, aguardando ACK HID (`sub_478ca0`).
+
+### 2.8 Limitação de Streaming e Desgaste de Memória Flash (`Opcode 0x0B`)
 - O comando `Opcode 0x02` (`COMMIT_TRANSACTION`) persiste dados no setor não-volátil da memória Flash do microcontrolador.
 - **Evidência Empírica no Hardware (AK820)**: Testes controlados (`flicker_diag` / `flicker_diag2`) demonstraram que **qualquer escrita contínua via `Opcode 0x0B`** (mesmo reenviando um quadro idêntico, apenas um chunk isolado ou sem `Opcode 0x02`) faz o teclado piscar visivelmente a cada escrita.
-- Isso indica que o controlador EVision reprocessa a iluminação a cada pacote `0x0B` recebido, não havendo evidência de que `0x0B` opere como framebuffer volátil em RAM isolada de flash.
-- **Decisão**: O streaming contínuo de GIFs por `Opcode 0x0B` é **inviável e proibido** no AK820 por causar cintilação constante e risco potencial de desgaste de memória Flash. O `Opcode 0x0B` deve ser usado exclusivamente para configuração estática pontual por tecla dentro de uma transação fechada (`0x01` -> `0x0B` -> `0x02`).
+- **Decisão**: O streaming contínuo por `Opcode 0x0B` é **inviável e proibido** no AK820 por causar cintilação constante e risco de desgaste de memória Flash. Streaming em tempo real deve usar exclusivamente o canal volátil **`Opcode 0x12`**.

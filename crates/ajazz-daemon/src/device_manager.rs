@@ -1,9 +1,14 @@
 use crate::gif_decoder::decode_gif_to_matrix_frames;
 use crate::profile_store::{load_profile, save_profile};
+use crate::screen_capture::ScreenCapturer;
 use ajazz_protocol::hidapi;
 use ajazz_protocol::{
     Ak820Device, LightingConfig, LightingMode, RgbColor, UserProfile, PROFILE_AK820,
     TOTAL_PHYSICAL_LEDS,
+};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -25,7 +30,38 @@ pub enum DeviceCommand {
     PlayGif(String, u8, oneshot::Sender<Result<(), String>>),
     StopGif(oneshot::Sender<Result<(), String>>),
     RenderFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
+    CaptureFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     GetStatus(oneshot::Sender<DeviceStatus>),
+}
+
+fn cancel_active_streams(
+    gif_cancel_tx: &mut Option<watch::Sender<bool>>,
+    capture_stop: &mut Option<Arc<AtomicBool>>,
+) {
+    if let Some(cancel) = gif_cancel_tx.take() {
+        let _ = cancel.send(true);
+    }
+    if let Some(stop) = capture_stop.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn start_capture_streamer(cmd_tx: mpsc::Sender<DeviceCommand>) -> Arc<AtomicBool> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = Arc::clone(&stop);
+    std::thread::spawn(move || {
+        let mut capturer = ScreenCapturer::new();
+        while !stop_flag.load(Ordering::Relaxed) {
+            if let Some(frame) = capturer.capture_matrix() {
+                match cmd_tx.try_send(DeviceCommand::CaptureFrame(frame)) {
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    stop
 }
 
 /// Actor dedicado para controle exclusivo do hardware USB HID e estado do User Profile.
@@ -39,6 +75,7 @@ pub async fn run_device_actor(
     let mut device: Option<Ak820Device> = None;
     let mut profile = load_profile();
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
+    let mut capture_stop: Option<Arc<AtomicBool>> = None;
 
     // Tenta conexão inicial
     if let Some(ref api) = hid_api {
@@ -48,12 +85,14 @@ pub async fn run_device_actor(
         }
     }
 
+    if device.is_some() && profile.lighting.mode == LightingMode::Capture {
+        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
+    }
+
     while let Some(cmd) = rx.recv().await {
         match cmd {
             DeviceCommand::SetStaticColor(color, resp) => {
-                if let Some(cancel) = gif_cancel_tx.take() {
-                    let _ = cancel.send(true);
-                }
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Static;
@@ -64,10 +103,9 @@ pub async fn run_device_actor(
                 let _ = resp.send(result);
             }
 
-            DeviceCommand::SetLighting(cfg, resp) => {
-                if let Some(cancel) = gif_cancel_tx.take() {
-                    let _ = cancel.send(true);
-                }
+            DeviceCommand::SetLighting(mut cfg, resp) => {
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                cfg.normalize();
 
                 let result = if cfg.mode == LightingMode::Custom {
                     apply_custom_command(
@@ -79,19 +117,22 @@ pub async fn run_device_actor(
                         None,
                     )
                 } else {
-                    apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg)
+                    let res = apply_lighting_command(&mut device, &mut hid_api, &mut profile, cfg);
+                    if res.is_ok() && cfg.mode == LightingMode::Capture {
+                        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
+                    }
+                    res
                 };
                 let _ = resp.send(result);
             }
 
             DeviceCommand::SetCustomBank(bank, colors, resp) => {
-                if let Some(cancel) = gif_cancel_tx.take() {
-                    let _ = cancel.send(true);
-                }
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Custom;
                 cfg.custom_group = bank.min(2);
+                cfg.normalize();
 
                 let result = apply_custom_command(
                     &mut device,
@@ -105,13 +146,12 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::SelectCustomBank(bank, resp) => {
-                if let Some(cancel) = gif_cancel_tx.take() {
-                    let _ = cancel.send(true);
-                }
+                cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
 
                 let mut cfg = profile.lighting;
                 cfg.mode = LightingMode::Custom;
                 cfg.custom_group = bank.min(2);
+                cfg.normalize();
 
                 let result = apply_custom_command(
                     &mut device,
@@ -227,9 +267,39 @@ pub async fn run_device_actor(
                 }
             }
 
+            DeviceCommand::CaptureFrame(frame) => {
+                if capture_stop.is_none() || profile.lighting.mode != LightingMode::Capture {
+                    continue;
+                }
+                if let Some(ref mut dev) = device {
+                    if let Err(e) = dev.send_live_matrix(&frame, profile.lighting.brightness) {
+                        warn!("Falha ao enviar quadro Capture (0x12, desconexão?): {e}");
+                        device = None;
+                        if let Some(stop) = capture_stop.take() {
+                            stop.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+
             DeviceCommand::GetStatus(resp) => {
                 let is_connected =
                     device.is_some() || try_connect_silent(&mut device, &mut hid_api);
+                if is_connected
+                    && profile.lighting.mode == LightingMode::Capture
+                    && capture_stop.is_none()
+                {
+                    let cfg = profile.lighting;
+                    let _ = apply_lighting_command(
+                        &mut device,
+                        &mut hid_api,
+                        &mut profile,
+                        cfg,
+                    );
+                    if device.is_some() {
+                        capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
+                    }
+                }
                 let is_playing = gif_cancel_tx.is_some();
                 let status = DeviceStatus {
                     connected: is_connected,

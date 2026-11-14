@@ -9,8 +9,9 @@ use ajazz_protocol::{
 use ipc_client::{send_request, IpcRequest, IpcResponse};
 use slint::{Color, ComponentHandle, Image, ModelRc, Rgb8Pixel, SharedPixelBuffer, SharedString, VecModel};
 use std::rc::Rc;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 struct GuiState {
     profile: UserProfile,
@@ -203,6 +204,12 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
 
 fn update_color_and_hsv(st: &mut GuiState, color: RgbColor, update_hsv: bool) {
     st.profile.lighting.color = color;
+    if st.profile.lighting.mode != LightingMode::Custom
+        && st.profile.lighting.mode.capabilities().supports_color
+    {
+        st.profile.lighting.multicolor = false;
+    }
+    st.profile.normalize();
     if update_hsv {
         let (h, s, v) = rgb_to_hsv(color);
         st.hue = h;
@@ -214,15 +221,12 @@ fn update_color_and_hsv(st: &mut GuiState, color: RgbColor, update_hsv: bool) {
 fn apply_picked_color(
     state: &Arc<Mutex<GuiState>>,
     ui_w: &slint::Weak<MainWindow>,
-    tx: &mpsc::Sender<IpcRequest>,
+    tx: &mpsc::UnboundedSender<IpcRequest>,
     rgb: RgbColor,
 ) {
     let (is_custom, cfg) = {
         let mut st = state.lock().unwrap();
         update_color_and_hsv(&mut st, rgb, true);
-        if st.profile.lighting.mode != LightingMode::Custom {
-            st.profile.lighting.multicolor = false;
-        }
         (
             st.profile.lighting.mode == LightingMode::Custom,
             st.profile.lighting,
@@ -237,14 +241,28 @@ fn apply_picked_color(
     }
 }
 
-fn dispatch_lighting(tx: &mpsc::Sender<IpcRequest>, cfg: LightingConfig) {
-    if cfg.mode == LightingMode::Custom {
-        let _ = tx.send(IpcRequest::SelectCustomBank {
-            bank: cfg.custom_group,
-        });
-    } else {
-        let _ = tx.send(IpcRequest::SetLighting { config: cfg });
+fn commit_lighting_change(
+    state: &Arc<Mutex<GuiState>>,
+    ui_w: &slint::Weak<MainWindow>,
+    tx: &mpsc::UnboundedSender<IpcRequest>,
+    mutate: impl FnOnce(&mut GuiState),
+) {
+    let cfg = {
+        let mut st = state.lock().unwrap();
+        mutate(&mut st);
+        st.profile.normalize();
+        st.profile.lighting
+    };
+    if let Some(ui) = ui_w.upgrade() {
+        let st = state.lock().unwrap();
+        sync_ui_from_state(&ui, &st);
     }
+    dispatch_lighting(tx, cfg);
+}
+
+fn dispatch_lighting(tx: &mpsc::UnboundedSender<IpcRequest>, mut cfg: LightingConfig) {
+    cfg.normalize();
+    let _ = tx.send(IpcRequest::SetLighting { config: cfg });
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -269,7 +287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sync_ui_from_state(&main_window, &st);
     }
 
-    let (tx, rx) = mpsc::channel::<IpcRequest>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<IpcRequest>();
 
     let ui_weak_status = main_window.as_weak();
     let state_ipc = Arc::clone(&state);
@@ -324,7 +342,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             loop {
                 tokio::select! {
-                    Some(req) = async { rx.recv().ok() } => {
+                    Some(req) = rx.recv() => {
                         let resp = send_request(req).await;
                         apply_status(resp, &state_ipc, &ui_weak_status);
                     }
@@ -346,16 +364,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(mode) = LightingMode::ALL.get(idx as usize).copied() else {
                 return;
             };
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.mode = mode;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -365,16 +376,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let st_c = Arc::clone(&state);
         let tx_c = tx.clone();
         main_window.on_brightness_changed(move |val| {
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.brightness = val.clamp(0, 4) as u8;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -384,16 +388,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let st_c = Arc::clone(&state);
         let tx_c = tx.clone();
         main_window.on_speed_changed(move |val| {
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.speed = val.clamp(0, 4) as u8;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -408,16 +405,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 LightingDirection::Primary
             };
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.direction = dir;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -427,16 +417,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let st_c = Arc::clone(&state);
         let tx_c = tx.clone();
         main_window.on_multicolor_toggled(move |enabled| {
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.multicolor = enabled;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -446,16 +429,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let st_c = Arc::clone(&state);
         let tx_c = tx.clone();
         main_window.on_zzcc_changed(move |val| {
-            let cfg = {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.zzcc_mode = val.clamp(0, 3) as u8;
-                st.profile.lighting
-            };
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            dispatch_lighting(&tx_c, cfg);
+            });
         });
     }
 
@@ -466,16 +442,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx_c = tx.clone();
         main_window.on_custom_bank_selected(move |bank| {
             let bank_u8 = bank.clamp(0, 2) as u8;
-            {
-                let mut st = st_c.lock().unwrap();
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
                 st.profile.lighting.mode = LightingMode::Custom;
                 st.profile.lighting.custom_group = bank_u8;
-            }
-            if let Some(ui) = ui_w.upgrade() {
-                let st = st_c.lock().unwrap();
-                sync_ui_from_state(&ui, &st);
-            }
-            let _ = tx_c.send(IpcRequest::SelectCustomBank { bank: bank_u8 });
+            });
         });
     }
 
@@ -670,6 +640,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Soltar o mouse no Popover HSV ou clicar fora -> efetiva cor automaticamente se não-Custom
+    {
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_hsv_committed(move || {
+            let (is_custom, cfg) = {
+                let st = st_c.lock().unwrap();
+                (
+                    st.profile.lighting.mode == LightingMode::Custom,
+                    st.profile.lighting,
+                )
+            };
+            if !is_custom {
+                dispatch_lighting(&tx_c, cfg);
+            }
+        });
+    }
+
     // Botão Aplicar (lê HEX ou RGB digitado caso usuário não tenha pressionado Enter e envia ao Daemon)
     {
         let ui_w = main_window.as_weak();
@@ -728,4 +716,99 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     main_window.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+
+    #[test]
+    fn bug3_hsv_pick_must_clear_multicolor_when_not_custom() {
+        let ui = MainWindow::new().expect("MainWindow::new");
+        let mut st = GuiState {
+            profile: UserProfile::default(),
+            synced_initial: false,
+            hue: 0.0,
+            sat: 1.0,
+            val: 1.0,
+        };
+        sync_ui_from_state(&ui, &st);
+
+        st.profile.lighting.mode = LightingMode::Wave;
+        st.profile.lighting.multicolor = true;
+        st.sat = 0.8;
+        st.val = 0.9;
+        let rgb = hsv_to_rgb(st.hue, st.sat, st.val);
+        update_color_and_hsv(&mut st, rgb, false);
+        assert!(
+            !st.profile.lighting.multicolor,
+            "Bug 3: Picking HSV color kept multicolor=true, so hardware ignores solid RGB color until user toggles multicolor or another mode!"
+        );
+    }
+
+    #[test]
+    fn bug3_dispatch_custom_must_preserve_gui_brightness() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let cfg = LightingConfig {
+            mode: LightingMode::Custom,
+            brightness: 2,
+            custom_group: 1,
+            ..LightingConfig::default()
+        };
+        dispatch_lighting(&tx, cfg);
+        let sent = rx.try_recv().expect("IpcRequest dispatched");
+        match sent {
+            IpcRequest::SetLighting { config } => {
+                assert_eq!(config.brightness, 2);
+                assert_eq!(config.custom_group, 1);
+                assert!(!config.multicolor);
+            }
+            other => panic!(
+                "Bug 3/2: dispatch_lighting sent {:?} in Custom mode, dropping brightness={}!",
+                other, cfg.brightness
+            ),
+        }
+    }
+
+    #[test]
+    fn bug3_mode_normalization_clears_multicolor_for_custom_and_capture() {
+        let mut custom = LightingConfig {
+            mode: LightingMode::Custom,
+            multicolor: true,
+            ..LightingConfig::default()
+        };
+        custom.normalize();
+        assert!(!custom.multicolor);
+
+        let mut capture = LightingConfig {
+            mode: LightingMode::Capture,
+            multicolor: true,
+            ..LightingConfig::default()
+        };
+        capture.normalize();
+        assert!(!capture.multicolor);
+    }
+
+    #[test]
+    fn bug3_ipc_source_must_not_block_tokio_select_with_std_mpsc() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).unwrap();
+        let prod_src = src.split("#[cfg(test)]").next().unwrap_or(&src);
+        assert!(
+            !prod_src.contains("std::sync::mpsc") && prod_src.contains("tokio::sync::mpsc"),
+            "Bug 3: GUI IPC thread must use async tokio::sync::mpsc rather than blocking std::sync::mpsc in tokio::select!"
+        );
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let woke_timer = rt.block_on(async {
+            let (_tx, mut rx) = mpsc::unbounded_channel::<IpcRequest>();
+            tokio::select! {
+                _ = rx.recv() => false,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => true,
+            }
+        });
+        assert!(woke_timer, "tokio::sync::mpsc::UnboundedReceiver::recv must not block timer branches in tokio::select!");
+    }
 }

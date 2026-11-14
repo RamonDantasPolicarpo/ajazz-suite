@@ -4,20 +4,19 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Paridade Completa do Subsistema de Iluminação AK820 IMPLEMENTADA
+## 1. Posição Atual: Correções Críticas de Protocolo, Custom, GUI/IPC e Modo Capture (0x12) CONCLUÍDAS
 
-- **Engenharia Reversa Estática e Protocolo HID (`ajazz-protocol`):**
-  - Anatomia completa dos 29 bytes (`0x1D`) de `Opcode 0x06` (`sub_492b30`, `LightInfo`, `SystemStages`) e matriz de capacidades dos 19 Lighting Effects (`sub_415010`) decodificada e documentada em [hid_protocol.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/protocol/hid_protocol.md).
-  - Descobertas críticas corrigidas no fio: inversão `4 - Speed` no byte `0x0B`, flag `MultiColor` (7-Color) no byte `0x0D`, direção `Fx` no byte `0x0C`, `ZZCCLedMode` (`0..3`) no byte `0x1A`, `CustomGroup` (`0..2`) no byte `0x21`, remapeamento `0xFE` para `Capture`/`Audio`, e stride `0x200` (512 bytes) por banco Custom em `Opcode 0x0B` (`sub_47a890`).
-  - Validação física executada em hardware (`Rain MultiColor`, `Corrugated` L↔R, `Custom` banco 0 com transação única fechada `0x01 -> 0x06 -> 0x0B -> 0x02` e restauração `Static`).
+- **Correções Baseadas em Evidências (`ajazz-protocol`):**
+  - **Bug WASD ↔ Setas (`WFlag`) corrigido**: `sub_492b30` / `sub_44ab70` mostraram que `payload[27]` (`0x1B`) é `WFlag` (`0` normal, `1` troca WASD↔Setas) e `payload[28]` (`0x1C`) é `Key6Flag` (`0xFF`). Pacote `Opcode 0x06` agora alinha byte-a-byte com o `Frame 117` oficial de `ak820_red.pcapng`.
+  - **Custom `Opcode 0x0B` + ACK HID + `RCtrl=93`**: `apply_custom_bank` agora normaliza `multicolor = false`, fecha primeiro `0x01 -> 0x06 -> 0x02` e envia os 7 pacotes `0x0B` aguardando ACK HID (`sub_4781c0`) após cada pacote; `AK820_KEY_LAYOUT[78]` (`RCtrl`, `light_id=112`) corrigido para `phys_led = 93` (`0x5D` em `sub_49ef80`).
+  - **Canal Volátil `Opcode 0x12`**: Implementado `build_live_matrix_packets` / `send_live_matrix` (`378` bytes, escala `BRIGHTNESS_LUT = [0, 63, 126, 190, 255]`, zero gravações em flash `0x01`/`0x02`).
 - **Daemon em Segundo Plano (`ajazz-daemon`):**
-  - Persistência de **User Profile** em `%APPDATA%\ajazz-companion\config.json` (`profile_store.rs`) para estado de iluminação e 3 bancos Custom estáticos (`Custom 1..3`).
-  - Canal IPC Named Pipe atualizado para `LightingConfig`, `SetCustomBank` e `SelectCustomBank` com sincronização inicial de perfil ao cliente GUI.
-  - `PlayGif` mantido desativado (`GIF_STREAMING_ENABLED = false`) para pesquisa futura segura de modo Áudio/streaming.
+  - Captura de tela nativa leve em Windows via Win32 GDI (`screen_capture.rs`, buffer estático `32x12` zero-alocação) transmitida em ~20 FPS via `Opcode 0x12` quando o modo `Capture` (`0xFE`) está ativo, com cancelamento automático ao trocar de modo ou desconectar USB.
+  - Persistência de **User Profile** em `%APPDATA%\ajazz-companion\config.json` (`profile_store.rs`).
 - **Interface Gráfica Nativa (`ajazz-gui`):**
-  - Janela travada em `980x680` (`min = max`), alinhamento simétrico e tema grafite fosco (`#18181B`) em `JetBrains Mono`.
-  - Seletor completo dos 19 efeitos nativos de firmware + Modo 20 `Custom`, controles dinâmicos de Brilho (`0..4`), Velocidade (`0..4`), Direção (`Fx`), `7-Color`, `Surmount Preset (1..4)`, 3 bancos Custom com pintura/borracha por tecla, `#HEX`, `R/G/B`, swatches rápidos e seletor HSV contínuo em popover sob demanda.
-- **Bloqueio/Aguardando:** Validação visual final pelo usuário na GUI executável; pesquisa futura para streaming seguro de Audio wave (`29`) isolada em standby.
+  - Canal IPC migrado de `std::sync::mpsc` bloqueante no `tokio::select!` para `tokio::sync::mpsc::unbounded_channel`, evitando travamentos de status/comandos.
+  - Aplicação imediata e consistente para todos os controles visuais (modo, brilho, velocidade, direção, swatches, HSV com commit automático ao soltar/fechar popover, e Custom preservando brilho e `multicolor = false`); botão `Aplicar` mantém confirmação de digitação manual HEX/RGB.
+- **Validação de Hardware Concluída:** Smoke test físico aprovado pelo usuário — WASD/Setinhas normais, modo Custom por tecla correto, resposta imediata/consistente dos controles na GUI e modo Capture (`0x12`) espelhando a tela em tempo real sem piscar.
 
 ---
 
@@ -54,6 +53,6 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ## 4. Próximos Passos Imediatos
 
-1. Validação interativa pelo usuário do comportamento dos 19 efeitos e dos 3 bancos Custom na GUI (`ajazz-daemon` + `ajazz-gui`).
-2. Decidir próxima etapa de paridade oficial: Keymap / Macros / SystemStages (`WinLock`, `PollingRate`) ou módulos dedicados (`Mouse NearLink` / `Switch Chattering`).
-3. Investigar em momento oportuno protocolo de áudio em tempo real do modo `audiorecord` (`29`) para entender se há canal volátil seguro diferente de `0x0B`.
+1. Versionar as correções validadas (`fix:` cobrindo `WFlag`, `Custom 0x0B + ACK + RCtrl=93`, canal volátil `0x12` Capture e ergonomia GUI/IPC).
+2. Reavaliar no futuro **GIF Player** e **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (comprovadamente seguro em RAM e sem piscada, substituindo o `0x0B` antigo).
+3. Escolher a próxima frente principal de paridade oficial ou novo módulo: Keymap / Macros / SystemStages (`WinLock`, `PollingRate`, `Debounce`), simulação de efeitos na GUI, ou `Mouse NearLink` / `Switch Chattering`.

@@ -72,6 +72,7 @@ export component MainWindow inherits Window {
     callback rgb-submitted(string, string, string);
     callback hsv-sv-updated(float, float);
     callback hsv-hue-updated(float);
+    callback hsv-committed();
     callback open-hsv-popover();
     callback apply-clicked();
     callback reconnect-daemon();
@@ -225,7 +226,10 @@ export component MainWindow inherits Window {
         background: #00000090;
 
         TouchArea {
-            clicked => { root.hsv-popover-open = false; }
+            clicked => {
+                root.hsv-popover-open = false;
+                root.hsv-committed();
+            }
         }
 
         Rectangle {
@@ -297,6 +301,9 @@ export component MainWindow inherits Window {
                                     clamp(1.0 - (self.mouse-y / 132px), 0.0, 1.0)
                                 );
                             }
+                            if (ev.kind == PointerEventKind.up) {
+                                root.hsv-committed();
+                            }
                         }
                     }
                 }
@@ -328,6 +335,9 @@ export component MainWindow inherits Window {
                         pointer-event(ev) => {
                             if (self.pressed) {
                                 root.hsv-hue-updated(clamp((self.mouse-x / 220px) * 360.0, 0.0, 359.9));
+                            }
+                            if (ev.kind == PointerEventKind.up) {
+                                root.hsv-committed();
                             }
                         }
                     }
