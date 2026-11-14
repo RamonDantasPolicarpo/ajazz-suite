@@ -3,7 +3,9 @@ slint::include_modules!();
 mod file_dialog;
 mod ipc_client;
 mod keymap_ui;
+mod mouse_ui;
 
+use ajazz_protocol::mouse::{MouseConfig, MouseStatus};
 use ajazz_protocol::{
     AudioStyle, DirectionKind, KeyAssignment, LightingConfig, LightingDirection, LightingMode,
     MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor, UserProfile,
@@ -31,11 +33,17 @@ pub struct GuiState {
     pub gif_path: Option<String>,
     pub gif_fps: u8,
     pub is_playing_gif: bool,
+    pub draft_mouse_config: MouseConfig,
+    pub mouse_synced_initial: bool,
+    pub mouse_force_resync: bool,
+    pub mouse_connected: bool,
+    pub mouse_status: Option<MouseStatus>,
 }
 
 impl GuiState {
     fn new(profile: UserProfile) -> Self {
         let (hue, sat, val) = rgb_to_hsv(profile.lighting.color);
+        let draft_mouse_config = profile.mouse.config.clone();
         Self {
             profile,
             synced_initial: false,
@@ -51,6 +59,11 @@ impl GuiState {
             gif_path: None,
             gif_fps: 25,
             is_playing_gif: false,
+            draft_mouse_config,
+            mouse_synced_initial: false,
+            mouse_force_resync: false,
+            mouse_connected: false,
+            mouse_status: None,
         }
     }
 }
@@ -254,6 +267,11 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
 
     keymap_ui::sync_keymap_macros_system_to_ui(ui, st);
     keymap_ui::sync_macro_draft_to_ui(ui, st);
+
+    let ms_dirty = st.draft_mouse_config != st.profile.mouse.config;
+    mouse_ui::sync_telemetry_to_ui(ui, st.mouse_connected, st.mouse_status.as_ref());
+    mouse_ui::sync_buttons_list_to_ui(ui, &st.profile.mouse.buttons);
+    mouse_ui::sync_config_to_ui(ui, &st.draft_mouse_config, ms_dirty);
 }
 
 fn update_color_and_hsv(st: &mut GuiState, color: RgbColor, update_hsv: bool) {
@@ -354,7 +372,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Falha ao criar runtime Tokio");
 
         rt.block_on(async move {
-            let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>| -> bool {
+            let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>, is_mouse_cmd: bool| -> bool {
                 match resp {
                     Ok(IpcResponse::Status { device_connected, profile, is_playing_gif, .. }) => {
                         let mut should_sync_ui = false;
@@ -394,23 +412,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         });
                         false
                     }
+                    Ok(IpcResponse::MouseStatus { mouse_connected, mouse_status, profile }) => {
+                        let (draft_cfg, dirty, buttons) = {
+                            let mut st = state_ref.lock().unwrap();
+                            let was_dirty = st.draft_mouse_config != st.profile.mouse.config;
+                            st.profile.mouse = profile;
+                            st.profile.mouse.config.normalize();
+                            st.mouse_connected = mouse_connected;
+                            st.mouse_status = mouse_status.clone();
+                            if !st.mouse_synced_initial || st.mouse_force_resync || !was_dirty {
+                                st.draft_mouse_config = st.profile.mouse.config.clone();
+                                st.mouse_synced_initial = true;
+                                st.mouse_force_resync = false;
+                            }
+                            let dirty = st.draft_mouse_config != st.profile.mouse.config;
+                            (
+                                st.draft_mouse_config.clone(),
+                                dirty,
+                                st.profile.mouse.buttons.clone(),
+                            )
+                        };
+                        let ui_clone = ui_w.clone();
+                        let _ = ui_clone.upgrade_in_event_loop(move |ui| {
+                            ui.set_daemon_online(true);
+                            mouse_ui::sync_telemetry_to_ui(&ui, mouse_connected, mouse_status.as_ref());
+                            mouse_ui::sync_buttons_list_to_ui(&ui, &buttons);
+                            mouse_ui::sync_config_to_ui(&ui, &draft_cfg, dirty);
+                        });
+                        false
+                    }
                     Ok(IpcResponse::Ok { message }) => {
                         let _ = ui_w.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
-                            ui.set_feedback_text(SharedString::from(message));
-                            ui.set_feedback_is_error(false);
+                            if is_mouse_cmd {
+                                ui.set_ms_feedback_text(SharedString::from(message));
+                                ui.set_ms_feedback_is_error(false);
+                            } else {
+                                ui.set_feedback_text(SharedString::from(message));
+                                ui.set_feedback_is_error(false);
+                            }
                         });
                         false
                     }
                     Ok(IpcResponse::Error { error }) => {
-                        {
+                        if !is_mouse_cmd {
                             let mut st = state_ref.lock().unwrap();
                             st.force_resync = true;
                         }
                         let _ = ui_w.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
-                            ui.set_feedback_text(SharedString::from(error));
-                            ui.set_feedback_is_error(true);
+                            if is_mouse_cmd {
+                                ui.set_ms_feedback_text(SharedString::from(error));
+                                ui.set_ms_feedback_is_error(true);
+                            } else {
+                                ui.set_feedback_text(SharedString::from(error));
+                                ui.set_feedback_is_error(true);
+                            }
                         });
                         true
                     }
@@ -422,31 +479,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = ui_w.upgrade_in_event_loop(|ui| {
                             ui.set_daemon_online(false);
                             ui.set_device_connected(false);
+                            mouse_ui::sync_telemetry_to_ui(&ui, false, None);
                         });
                         false
                     }
                 }
             };
 
-            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status);
+            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
+            apply_status(send_request(IpcRequest::GetMouseStatus).await, &state_ipc, &ui_weak_status, true);
 
             loop {
                 tokio::select! {
                     Some(req) = rx.recv() => {
+                        let is_mouse_cmd = matches!(
+                            req,
+                            IpcRequest::SetMouseConfig { .. }
+                                | IpcRequest::SetMouseButton { .. }
+                                | IpcRequest::ResetMouseButtons
+                                | IpcRequest::SyncMouseFromDevice
+                                | IpcRequest::StartMousePairing
+                                | IpcRequest::GetMouseStatus
+                        );
                         let was_sync = matches!(req, IpcRequest::SyncFromDevice);
+                        let was_mouse_sync = matches!(
+                            req,
+                            IpcRequest::SyncMouseFromDevice | IpcRequest::SetMouseConfig { .. }
+                        );
                         let is_gif_cmd = matches!(req, IpcRequest::PlayGif { .. } | IpcRequest::StopGif);
                         let resp = send_request(req).await;
-                        let need_refresh = apply_status(resp, &state_ipc, &ui_weak_status);
-                        if was_sync || is_gif_cmd || need_refresh {
+                        let was_ok = matches!(&resp, Ok(IpcResponse::Ok { .. }));
+                        let need_refresh = apply_status(resp, &state_ipc, &ui_weak_status, is_mouse_cmd);
+                        if is_mouse_cmd {
+                            if was_mouse_sync && was_ok {
+                                state_ipc.lock().unwrap().mouse_force_resync = true;
+                            }
+                            apply_status(send_request(IpcRequest::GetMouseStatus).await, &state_ipc, &ui_weak_status, true);
+                        } else if was_sync || is_gif_cmd || need_refresh {
                             if was_sync {
                                 state_ipc.lock().unwrap().force_resync = true;
                             }
-                            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status);
+                            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
                         }
                     }
                     _ = tokio::time::sleep(Duration::from_millis(1500)) => {
-                        let resp = send_request(IpcRequest::GetStatus).await;
-                        apply_status(resp, &state_ipc, &ui_weak_status);
+                        apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
+                        apply_status(send_request(IpcRequest::GetMouseStatus).await, &state_ipc, &ui_weak_status, true);
                     }
                 }
             }
@@ -922,6 +1000,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx_c = tx.clone();
         main_window.on_reconnect_daemon(move || {
             let _ = tx_c.send(IpcRequest::GetStatus);
+            let _ = tx_c.send(IpcRequest::GetMouseStatus);
         });
     }
 
@@ -1424,6 +1503,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // --- Callbacks do Mouse AJ179 NL P ---
+    mouse_ui::register_mouse_callbacks(&main_window, &state, &tx);
+
     main_window.run()?;
     Ok(())
 }
@@ -1466,6 +1548,27 @@ mod feedback_tests {
         assert_eq!(ui.get_gif_file_name().as_str(), "demo.gif");
         assert_eq!(ui.get_gif_fps(), 30);
         assert!(ui.get_is_playing_gif());
+
+        // Valida telemetria, DPI e flag dirty do Mouse AJ179 na mesma instância Slint.
+        st.mouse_connected = true;
+        st.mouse_status = Some(MouseStatus {
+            connection_mode: ajazz_protocol::mouse::MouseConnectionMode::NearLink24G,
+            online: true,
+            charging: false,
+            battery_percent: 50,
+            mouse_fw: "1.0.14".into(),
+            receiver_fw: Some("1.0.14".into()),
+            raw_mode: 1,
+            report_flag: 0,
+            config: st.profile.mouse.config.clone(),
+            raw_dpi_words: [400, 800, 1600, 3200, 6400, 12800],
+        });
+        st.draft_mouse_config.dpi_stages[0] = 600;
+        sync_ui_from_state(&ui, &st);
+        assert!(ui.get_ms_connected());
+        assert_eq!(ui.get_ms_battery_percent(), 50);
+        assert_eq!(ui.get_sidebar_mouse_subtitle().as_str(), "2.4G • 50%");
+        assert!(ui.get_ms_dirty());
     }
 
     #[test]

@@ -197,10 +197,84 @@ export component MainWindow inherits Window {
     callback sys-sync-from-device();
     callback sys-reset-keymap-factory();
 
+    // Estado e callbacks do Mouse AJ179 NL P
+    in-out property <string> sidebar-mouse-subtitle: "Desconectado";
+    in-out property <bool> ms-connected: false;
+    in-out property <bool> ms-online: false;
+    in-out property <bool> ms-charging: false;
+    in-out property <int> ms-battery-percent: 0;
+    in-out property <string> ms-conn-label: "OFFLINE";
+    in-out property <string> ms-fw-label: "VID 0x7768 • UsagePage 0xFFB2";
+    in-out property <string> ms-feedback-text: "";
+    in-out property <bool> ms-feedback-is-error: false;
+    in-out property <int> ms-subtab: 0;
+    in-out property <bool> ms-dirty: false;
+
+    in-out property <int> ms-dpi-count: 4;
+    in-out property <int> ms-dpi-index: 1;
+    in-out property <[int]> ms-dpi-values: [400, 800, 1600, 3200, 6400, 12800];
+    in-out property <[string]> ms-dpi-texts: ["400", "800", "1600", "3200", "6400", "12800"];
+    in-out property <int> ms-polling-idx: 3;
+    in-out property <int> ms-lod-idx: 0;
+    in-out property <bool> ms-motion-sync: true;
+    in-out property <bool> ms-ripple-control: false;
+    in-out property <bool> ms-linear-correction: false;
+    in-out property <bool> ms-highspeed: true;
+    in-out property <int> ms-debounce-ms: 8;
+
+    in-out property <int> ms-scroll-idx: 0;
+    in-out property <int> ms-light-sleep: 60;
+    in-out property <int> ms-deep-sleep: 300;
+    in-out property <string> ms-light-sleep-label: "1 min";
+    in-out property <string> ms-deep-sleep-label: "5 min";
+
+    in-out property <[string]> ms-button-labels: ["Clique Esq.", "Clique Dir.", "Botão Meio", "Avançar", "Voltar"];
+    in-out property <int> ms-selected-slot: 0;
+    in-out property <string> ms-slot-title: "[0] CLIQUE ESQUERDO";
+    in-out property <string> ms-slot-current-binding: "Clique Esq.";
+    in-out property <int> ms-btn-category: 0;
+    in-out property <int> ms-btn-mouse-idx: 0;
+    in-out property <int> ms-btn-mod-mask: 0;
+    in-out property <int> ms-btn-key-idx: 0;
+    in-out property <int> ms-btn-media-idx: 0;
+    in-out property <int> ms-btn-sniper-idx: 0;
+    in-out property <bool> ms-btn-capturing-key: false;
+    in-out property <bool> ms-btn-left-warning: false;
+    in property <[string]> ms-media-labels: [];
+
+    callback ms-dpi-count-changed(int);
+    callback ms-dpi-stage-selected(int);
+    callback ms-dpi-step(int, int);
+    callback ms-dpi-text-edited(int, string);
+    callback ms-dpi-text-committed(int, string);
+    callback ms-polling-selected(int);
+    callback ms-lod-selected(int);
+    callback ms-sensor-toggled(int);
+    callback ms-highspeed-toggled();
+    callback ms-debounce-step(int);
+    callback ms-debounce-set(int);
+    callback ms-scroll-selected(int);
+    callback ms-light-sleep-selected(int);
+    callback ms-deep-sleep-selected(int);
+    callback ms-apply-config-clicked();
+    callback ms-sync-clicked();
+    callback ms-start-pairing-clicked();
+    callback ms-slot-selected(int);
+    callback ms-btn-category-selected(int);
+    callback ms-btn-mouse-selected(int);
+    callback ms-btn-toggle-modifier(int);
+    callback ms-btn-catalog-key-selected(int);
+    callback ms-btn-capture-key(string, bool, bool, bool, bool);
+    callback ms-btn-media-selected(int);
+    callback ms-btn-sniper-selected(int);
+    callback ms-apply-button-clicked();
+    callback ms-reset-buttons-clicked();
+
     HorizontalLayout {
         Sidebar {
             active-tab <=> root.active-tab;
             daemon-online: root.daemon-online;
+            mouse-subtitle: root.sidebar-mouse-subtitle;
         }
 
         Rectangle {
@@ -448,8 +522,82 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Aba 1: Mouse NearLink
-            if (root.active-tab == 1) : MouseView { }
+            // Aba 1: Mouse AJ179 NL P NearLink
+            if (root.active-tab == 1) : MouseView {
+                daemon-online: root.daemon-online;
+                ms-connected: root.ms-connected;
+                ms-online: root.ms-online;
+                ms-charging: root.ms-charging;
+                ms-battery-percent: root.ms-battery-percent;
+                ms-conn-label: root.ms-conn-label;
+                ms-fw-label: root.ms-fw-label;
+                ms-feedback-text: root.ms-feedback-text;
+                ms-feedback-is-error: root.ms-feedback-is-error;
+                subtab <=> root.ms-subtab;
+                dirty: root.ms-dirty;
+
+                dpi-count: root.ms-dpi-count;
+                dpi-index: root.ms-dpi-index;
+                dpi-values: root.ms-dpi-values;
+                dpi-texts: root.ms-dpi-texts;
+                polling-idx: root.ms-polling-idx;
+                lod-idx: root.ms-lod-idx;
+                motion-sync: root.ms-motion-sync;
+                ripple-control: root.ms-ripple-control;
+                linear-correction: root.ms-linear-correction;
+                highspeed-mode: root.ms-highspeed;
+                debounce-ms: root.ms-debounce-ms;
+
+                scroll-idx: root.ms-scroll-idx;
+                light-sleep: root.ms-light-sleep;
+                deep-sleep: root.ms-deep-sleep;
+                light-sleep-label: root.ms-light-sleep-label;
+                deep-sleep-label: root.ms-deep-sleep-label;
+
+                button-labels: root.ms-button-labels;
+                selected-slot: root.ms-selected-slot;
+                slot-title: root.ms-slot-title;
+                slot-current-binding: root.ms-slot-current-binding;
+                btn-category <=> root.ms-btn-category;
+                btn-mouse-idx <=> root.ms-btn-mouse-idx;
+                btn-mod-mask <=> root.ms-btn-mod-mask;
+                btn-key-idx <=> root.ms-btn-key-idx;
+                btn-media-idx <=> root.ms-btn-media-idx;
+                btn-sniper-idx <=> root.ms-btn-sniper-idx;
+                btn-capturing-key <=> root.ms-btn-capturing-key;
+                btn-left-warning: root.ms-btn-left-warning;
+                key-catalog-labels: root.km-key-catalog-labels;
+                media-labels: root.ms-media-labels;
+
+                dpi-count-changed(n) => { root.ms-dpi-count-changed(n); }
+                dpi-stage-selected(i) => { root.ms-dpi-stage-selected(i); }
+                dpi-step(i, d) => { root.ms-dpi-step(i, d); }
+                dpi-text-edited(i, s) => { root.ms-dpi-text-edited(i, s); }
+                dpi-text-committed(i, s) => { root.ms-dpi-text-committed(i, s); }
+                polling-selected(i) => { root.ms-polling-selected(i); }
+                lod-selected(i) => { root.ms-lod-selected(i); }
+                sensor-toggled(i) => { root.ms-sensor-toggled(i); }
+                highspeed-toggled => { root.ms-highspeed-toggled(); }
+                debounce-step(d) => { root.ms-debounce-step(d); }
+                debounce-set(v) => { root.ms-debounce-set(v); }
+                scroll-selected(i) => { root.ms-scroll-selected(i); }
+                light-sleep-selected(s) => { root.ms-light-sleep-selected(s); }
+                deep-sleep-selected(s) => { root.ms-deep-sleep-selected(s); }
+                apply-config-clicked => { root.ms-apply-config-clicked(); }
+                sync-clicked => { root.ms-sync-clicked(); }
+                start-pairing-clicked => { root.ms-start-pairing-clicked(); }
+
+                slot-selected(i) => { root.ms-slot-selected(i); }
+                btn-category-selected(c) => { root.ms-btn-category-selected(c); }
+                btn-mouse-selected(i) => { root.ms-btn-mouse-selected(i); }
+                btn-toggle-modifier(m) => { root.ms-btn-toggle-modifier(m); }
+                btn-catalog-key-selected(i) => { root.ms-btn-catalog-key-selected(i); }
+                btn-capture-key(t, c, s, a, m) => { root.ms-btn-capture-key(t, c, s, a, m); }
+                btn-media-selected(i) => { root.ms-btn-media-selected(i); }
+                btn-sniper-selected(i) => { root.ms-btn-sniper-selected(i); }
+                apply-button-clicked => { root.ms-apply-button-clicked(); }
+                reset-buttons-clicked => { root.ms-reset-buttons-clicked(); }
+            }
 
             // Aba 2: Configurações & Daemon
             if (root.active-tab == 2) : SettingsView {

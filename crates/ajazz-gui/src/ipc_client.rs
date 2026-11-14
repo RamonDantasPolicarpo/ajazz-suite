@@ -1,3 +1,4 @@
+use ajazz_protocol::mouse::{MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus};
 use ajazz_protocol::{
     KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
 };
@@ -48,6 +49,17 @@ pub enum IpcRequest {
     },
     StopGif,
     GetStatus,
+    GetMouseStatus,
+    SetMouseConfig {
+        config: MouseConfig,
+    },
+    SetMouseButton {
+        slot: u8,
+        assignment: MouseButtonSlot,
+    },
+    ResetMouseButtons,
+    SyncMouseFromDevice,
+    StartMousePairing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +76,11 @@ pub enum IpcResponse {
         device_name: String,
         profile: UserProfile,
         is_playing_gif: bool,
+    },
+    MouseStatus {
+        mouse_connected: bool,
+        mouse_status: Option<MouseStatus>,
+        profile: MouseProfile,
     },
     Pong,
 }

@@ -4,13 +4,13 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Mouse AJ179 NL P Integrado no Protocol + Daemon (Aguardando Grill Me da GUI)
+## 1. Posição Atual: Mouse AJ179 NL P Integrado Fim-a-Fim (Protocol + Daemon + GUI) — Aguardando Validação de Escrita no Hardware
 
 - **Mouse AJAZZ AJ179 NL P (`NearLink BS25/BS2X`, `AJAZZ Driver（W1）.exe`):**
   - Política anti-brick e bloqueio de DFU/Bootloader registrada em [ADR-0003](docs/adr/0003-mouse-anti-brick-and-dfu-lockout.md) (`UsagePage 0xFFB1`, `BurnTool.exe`, `libburn.dll` e `06 0F ... FF` estritamente bloqueados).
   - Protocolo HID proprietário documentado em [mouse_protocol.md](docs/protocol/mouse_protocol.md) (`VID 0x7768`, `PID 0x642E` 2.4G / `0x6D2E` USB, `UsagePage 0xFFB2 / Usage 0x01`, reports de 64 bytes) e implementado em `crates/ajazz-protocol/src/mouse.rs` (`Aj179MouseDevice`, `MouseStatus`, `MouseConfig`, `MouseButtonSlot`, `MouseProfile`, validado por leitura real no hardware em 2.4G: FW `1.0.14`, bateria `50%`, 6 estágios DPI).
-  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA` e persistência em `UserProfile.mouse` implementados e testados.
-  - **Interface Gráfica (`ajazz-gui`)**: Aguardando rodada obrigatória de **Grill Me** antes de iniciar a implementação da aba do mouse.
+  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA` e persistência em `UserProfile.mouse`.
+  - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (2 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`) com telemetria global de bateria/conexão na Sidebar, barra fixa de telemetria, 3 sub-abas (`Performance & Sensor` com 6 estágios DPI/Polling/LOD/Sensor/Debounce, `Botões` com esquema visual dos 5 botões + trava anti-lockout do Clique Esquerdo, `Energia & Conexão` com presets de Sleep/Scroll/Pareamento 2.4G em 2 cliques) e modo rascunho + `Aplicar no Mouse` / `Sincronizar`. Todos os 38 testes do workspace passam.
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -62,13 +62,12 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `b6574aa`: `chore: ignore AJAZZ_Mouse official software directory`
 - `dcacc6d`: `docs: document AJ179 NL P HID protocol and anti-brick ADR`
 - `dbcfe99`: `feat(protocol): implement AJ179 NL P HID codecs and validated status reader`
+- `a4a0590`: `feat(daemon): integrate AJ179 NL P mouse IPC, state sync, and hot-unplug handling`
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. **Mouse AJ179 NL P (`Grill Me` -> `ajazz-gui`)**:
-   - Realizar rodada obrigatória de **Grill Me** (`ask_question`) com o usuário para definir layout, sub-abas, escopo de remapeamento/macros e fluxo de aplicação/pareamento da aba `NEARLINK MOUSE`.
-   - Implementar cliente IPC e views Slint em `crates/ajazz-gui`, validar escrita ao vivo no hardware físico (DPI, LOD, sensor, polling, botões) e atualizar testes do workspace.
+1. **Validação ao Vivo no Mouse Físico (`AJ179 NL P`)**: executar `ajazz-daemon` + `ajazz-gui` e validar escrita ao vivo no hardware (DPI `50..26000`, troca de estágio, LOD, sensor flags, polling rate, debounce, sleep e remapeamento dos 5 botões).
 2. **Refinamentos do GIF Player (pós-consolidação)**: adicionar enquadramento/recorte (*crop* / *pan & zoom*) da região do GIF projetada na matriz e controle fino de velocidade/FPS mais baixos (1–10 FPS / multiplicador).
-3. **Simulação Visual + Detector de Switch Chattering**: animação ao vivo no `KeyboardView` e diagnóstico de chattering.
+3. **Macros no Mouse (`06 31`) + Detector de Switch Chattering**: adicionar suporte de macros do mouse (`06 31`) caso necessário após validação e diagnóstico de chattering.
