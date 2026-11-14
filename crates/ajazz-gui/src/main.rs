@@ -1,12 +1,13 @@
 slint::include_modules!();
 
+mod file_dialog;
 mod ipc_client;
 mod keymap_ui;
 
 use ajazz_protocol::{
-    DirectionKind, KeyAssignment, LightingConfig, LightingDirection, LightingMode, MacroAction,
-    MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor, UserProfile, AK820_KEY_LAYOUT,
-    HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
+    AudioStyle, DirectionKind, KeyAssignment, LightingConfig, LightingDirection, LightingMode,
+    MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor, UserProfile,
+    AK820_KEY_LAYOUT, HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
 };
 use ipc_client::{send_request, IpcRequest, IpcResponse};
 use slint::{Color, ComponentHandle, Image, ModelRc, Rgb8Pixel, SharedPixelBuffer, SharedString, VecModel};
@@ -27,6 +28,9 @@ pub struct GuiState {
     pub draft_macro_name: String,
     pub draft_macro_steps: Vec<MacroStep>,
     pub last_record_instant: Option<Instant>,
+    pub gif_path: Option<String>,
+    pub gif_fps: u8,
+    pub is_playing_gif: bool,
 }
 
 impl GuiState {
@@ -44,6 +48,9 @@ impl GuiState {
             draft_macro_name: String::new(),
             draft_macro_steps: Vec::new(),
             last_record_instant: None,
+            gif_path: None,
+            gif_fps: 25,
+            is_playing_gif: false,
         }
     }
 }
@@ -206,6 +213,22 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
     ui.set_multicolor(cfg.multicolor);
     ui.set_zzcc_mode(cfg.zzcc_mode as i32);
     ui.set_custom_bank(cfg.custom_group as i32);
+    ui.set_audio_style(cfg.audio_style as i32);
+    ui.set_audio_bg_enabled(cfg.audio_bg_enabled);
+    ui.set_audio_bg_color(to_slint_color(cfg.audio_bg_color));
+    ui.set_gif_fps(st.gif_fps as i32);
+    ui.set_is_playing_gif(st.is_playing_gif);
+    if let Some(ref p) = st.gif_path {
+        let name = std::path::Path::new(p)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(p.as_str());
+        ui.set_gif_file_name(SharedString::from(name));
+        ui.set_gif_has_file(true);
+    } else {
+        ui.set_gif_file_name(SharedString::from("Nenhum .gif selecionado"));
+        ui.set_gif_has_file(false);
+    }
 
     ui.set_supports_color(caps.supports_color);
     ui.set_supports_multicolor(caps.supports_multicolor);
@@ -215,6 +238,7 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
     ui.set_dir_reverse_label(SharedString::from(dir_r));
     ui.set_supports_zzcc(caps.supports_zzcc_mode);
     ui.set_is_custom_mode(caps.is_custom_per_key);
+    ui.set_is_audio_mode(cfg.mode == LightingMode::Audio);
 
     ui.set_current_color(to_slint_color(cfg.color));
     ui.set_hex_text(SharedString::from(format!(
@@ -309,6 +333,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     main_window.set_hsv_v(v0);
     main_window.set_km_key_catalog_labels(keymap_ui::key_catalog_labels());
     main_window.set_km_extra_action_labels(keymap_ui::extra_action_labels());
+    let mode_labels_vec: Vec<SharedString> = LightingMode::ALL
+        .iter()
+        .map(|m| SharedString::from(m.label()))
+        .collect();
+    main_window.set_mode_labels(ModelRc::from(Rc::new(VecModel::from(mode_labels_vec))));
     {
         let st = state.lock().unwrap();
         sync_ui_from_state(&main_window, &st);
@@ -327,10 +356,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rt.block_on(async move {
             let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>| -> bool {
                 match resp {
-                    Ok(IpcResponse::Status { device_connected, profile, .. }) => {
+                    Ok(IpcResponse::Status { device_connected, profile, is_playing_gif, .. }) => {
                         let mut should_sync_ui = false;
                         {
                             let mut st = state_ref.lock().unwrap();
+                            if st.is_playing_gif != is_playing_gif {
+                                st.is_playing_gif = is_playing_gif;
+                            }
                             if !st.synced_initial || st.force_resync {
                                 st.profile = profile;
                                 st.profile.normalize();
@@ -354,6 +386,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = ui_clone.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
                             ui.set_device_connected(device_connected);
+                            ui.set_is_playing_gif(is_playing_gif);
                             if should_sync_ui {
                                 let st = state_ui.lock().unwrap();
                                 sync_ui_from_state(&ui, &st);
@@ -401,9 +434,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::select! {
                     Some(req) = rx.recv() => {
                         let was_sync = matches!(req, IpcRequest::SyncFromDevice);
+                        let is_gif_cmd = matches!(req, IpcRequest::PlayGif { .. } | IpcRequest::StopGif);
                         let resp = send_request(req).await;
                         let need_refresh = apply_status(resp, &state_ipc, &ui_weak_status);
-                        if was_sync || need_refresh {
+                        if was_sync || is_gif_cmd || need_refresh {
                             if was_sync {
                                 state_ipc.lock().unwrap().force_resync = true;
                             }
@@ -599,6 +633,119 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 bank: bank_u8,
                 colors: colors_vec,
             });
+        });
+    }
+
+    // Audio Sync: estilo 0..6, fundo ON/OFF e cor de fundo
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_audio_style_selected(move |idx| {
+            let style = AudioStyle::from_u8(idx.clamp(0, 6) as u8);
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
+                st.profile.lighting.mode = LightingMode::Audio;
+                st.profile.lighting.audio_style = style;
+            });
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_audio_bg_toggled(move |enabled| {
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
+                st.profile.lighting.mode = LightingMode::Audio;
+                st.profile.lighting.audio_bg_enabled = enabled;
+                if enabled && st.profile.lighting.audio_bg_color == RgbColor::default() {
+                    st.profile.lighting.audio_bg_color = st.profile.lighting.color;
+                }
+            });
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_audio_bg_use_current(move || {
+            commit_lighting_change(&st_c, &ui_w, &tx_c, |st| {
+                st.profile.lighting.mode = LightingMode::Audio;
+                st.profile.lighting.audio_bg_color = st.profile.lighting.color;
+                st.profile.lighting.audio_bg_enabled = true;
+            });
+        });
+    }
+
+    // GIF Player: seletor nativo Windows + FPS + Play/Stop em RAM volátil (0x12)
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_gif_browse_clicked(move || {
+            let ui_clone = ui_w.clone();
+            let st_clone = Arc::clone(&st_c);
+            std::thread::spawn(move || {
+                if let Some(path) = file_dialog::pick_gif_file() {
+                    {
+                        let mut st = st_clone.lock().unwrap();
+                        st.gif_path = Some(path);
+                    }
+                    let st_ui = Arc::clone(&st_clone);
+                    let _ = ui_clone.upgrade_in_event_loop(move |ui| {
+                        let st = st_ui.lock().unwrap();
+                        sync_ui_from_state(&ui, &st);
+                    });
+                }
+            });
+        });
+    }
+
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_gif_fps_selected(move |fps| {
+            let eff_fps = fps.clamp(1, 60) as u8;
+            let restart_path = {
+                let mut st = st_c.lock().unwrap();
+                st.gif_fps = eff_fps;
+                if st.is_playing_gif {
+                    st.gif_path.clone()
+                } else {
+                    None
+                }
+            };
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_gif_fps(eff_fps as i32);
+            }
+            if let Some(path) = restart_path {
+                let _ = tx_c.send(IpcRequest::PlayGif {
+                    path,
+                    fps: Some(eff_fps),
+                });
+            }
+        });
+    }
+
+    {
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_gif_play_toggle(move || {
+            let action = {
+                let st = st_c.lock().unwrap();
+                if st.is_playing_gif {
+                    Some(IpcRequest::StopGif)
+                } else {
+                    st.gif_path.as_ref().map(|p| IpcRequest::PlayGif {
+                        path: p.clone(),
+                        fps: Some(st.gif_fps),
+                    })
+                }
+            };
+            if let Some(req) = action {
+                let _ = tx_c.send(req);
+            }
         });
     }
 
@@ -1301,6 +1448,24 @@ mod feedback_tests {
             !st.profile.lighting.multicolor,
             "Bug 3: Picking HSV color kept multicolor=true, so hardware ignores solid RGB color until user toggles multicolor or another mode!"
         );
+
+        // Valida na mesma instância Slint (Winit permite 1 EventLoop por processo) os novos campos Audio/GIF.
+        st.profile.lighting.mode = LightingMode::Audio;
+        st.profile.lighting.audio_style = AudioStyle::ConcentricRings;
+        st.profile.lighting.audio_bg_enabled = true;
+        st.profile.lighting.audio_bg_color = RgbColor::new(12, 34, 56);
+        st.gif_path = Some(r"C:\gifs\demo.gif".to_string());
+        st.gif_fps = 30;
+        st.is_playing_gif = true;
+        sync_ui_from_state(&ui, &st);
+
+        assert!(ui.get_is_audio_mode());
+        assert_eq!(ui.get_audio_style(), AudioStyle::ConcentricRings as i32);
+        assert!(ui.get_audio_bg_enabled());
+        assert!(ui.get_gif_has_file());
+        assert_eq!(ui.get_gif_file_name().as_str(), "demo.gif");
+        assert_eq!(ui.get_gif_fps(), 30);
+        assert!(ui.get_is_playing_gif());
     }
 
     #[test]

@@ -5,6 +5,8 @@ use thiserror::Error;
 
 pub use hidapi;
 
+pub mod audio;
+pub use audio::*;
 pub mod keymap;
 pub use keymap::*;
 pub mod macros;
@@ -223,13 +225,14 @@ pub enum LightingMode {
     Scan = 0x10,
     Surmount = 0x11,
     Speed = 0x12,
+    Audio = 0x1D,
     Custom = 0x14,
     Capture = 0x1E,
 }
 
 impl LightingMode {
     /// Ordem canônica dos efeitos expostos para seleção do usuário.
-    pub const ALL: [LightingMode; 20] = [
+    pub const ALL: [LightingMode; 21] = [
         Self::Static,
         Self::Corrugated,
         Self::Cloud,
@@ -249,13 +252,14 @@ impl LightingMode {
         Self::Surmount,
         Self::Speed,
         Self::Capture,
+        Self::Audio,
         Self::Custom,
     ];
 
-    /// Byte enviado em `payload[9]` no pacote `Opcode 0x06` (`Capture` usa `0xFE`).
+    /// Byte enviado em `payload[9]` no pacote `Opcode 0x06` (`Capture` e `Audio` usam `0xFE`).
     pub const fn wire_id(self) -> u8 {
         match self {
-            Self::Capture => 0xFE,
+            Self::Capture | Self::Audio => 0xFE,
             other => other as u8,
         }
     }
@@ -282,6 +286,7 @@ impl LightingMode {
             0x11 => Self::Surmount,
             0x12 => Self::Speed,
             0x14 => Self::Custom,
+            0x1D => Self::Audio,
             0x1E | 0xFE => Self::Capture,
             _ => Self::Static,
         }
@@ -310,6 +315,7 @@ impl LightingMode {
             Self::Speed => "Speed",
             Self::Custom => "Custom",
             Self::Capture => "Capture",
+            Self::Audio => "Audio",
         }
     }
 
@@ -404,12 +410,21 @@ impl LightingMode {
                 supports_zzcc_mode: false,
                 is_custom_per_key: false,
             },
+            Self::Audio => ModeCapabilities {
+                supports_color: true,
+                supports_multicolor: true,
+                supports_speed: true,
+                direction_kind: None,
+                supports_zzcc_mode: false,
+                is_custom_per_key: false,
+            },
         }
     }
 }
 
 /// Parâmetros completos de um Lighting Effect do AK820 (`Opcode 0x06`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct LightingConfig {
     pub mode: LightingMode,
     /// Nível de brilho: `0..=4`.
@@ -423,6 +438,11 @@ pub struct LightingConfig {
     pub zzcc_mode: u8,
     /// Banco ativo do modo Custom (`0..=2` -> Custom 1..3).
     pub custom_group: u8,
+    /// Estilo visual da sincronização com áudio (`sub_4966c0`, `0..=6`).
+    pub audio_style: AudioStyle,
+    /// Cor de fundo para teclas silenciosas no modo Audio.
+    pub audio_bg_enabled: bool,
+    pub audio_bg_color: RgbColor,
 }
 
 impl LightingConfig {
@@ -449,6 +469,9 @@ impl Default for LightingConfig {
             color: RgbColor::new(0xFF, 0x00, 0x00),
             zzcc_mode: 0,
             custom_group: 0,
+            audio_style: AudioStyle::default(),
+            audio_bg_enabled: false,
+            audio_bg_color: RgbColor::default(),
         }
     }
 }
@@ -680,6 +703,7 @@ pub fn parse_config_block(block: &[u8]) -> Result<(LightingConfig, SystemStages)
         color: RgbColor::new(block[6], block[7], block[8]),
         zzcc_mode: block[18],
         custom_group: block[25],
+        ..LightingConfig::default()
     };
     cfg.normalize();
 
@@ -1245,6 +1269,7 @@ mod tests {
             color: RgbColor::new(0x10, 0x20, 0x30),
             zzcc_mode: 2,
             custom_group: 2,
+            ..LightingConfig::default()
         };
         let p = build_lighting_packet_config(&cfg);
         assert_eq!(p[9], 0x0F);
@@ -1287,6 +1312,7 @@ mod tests {
             color: RgbColor::new(0x11, 0x22, 0x33),
             zzcc_mode: 1,
             custom_group: 1,
+            ..LightingConfig::default()
         };
         let sys = SystemStages {
             win_lock: true,

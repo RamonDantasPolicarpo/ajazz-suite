@@ -4,19 +4,21 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Paridade de SystemStages (0x05/0x06), Remapeamento (0x03/0x1B/0x07/0x09) e Macros (0x15) VALIDADA EM HARDWARE
+## 1. Posição Atual: Audio Sync (`0x1D -> 0xFE`) e GIF Player Volátil (`0x12`) Implementados
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
   - **Keymap (`Opcode 0x03`, `0x1B`, `0x07`, `0x09`)**: Descoberta dinâmica de `total_keys` e blocos de macro (`0x03`), mapa `led_map[hw_key_idx] == phys_led` (`0x1B`), leitura base da `KeyMatrix` (`0x07`), registros de 3 bytes Big-Endian (`Tecla/Combo`, `Mouse`, `Mídia/Consumer`, `Sistema ACPI`, `Macro 0x70/0x71`, `Camada`, `Fn`, `Desabilitar`) com `AK820_FACTORY_ASSIGNMENTS` (82 teclas) e escrita fechada em transação (`0x01 -> 0x09 -> 0x02`).
   - **Macros (`Opcode 0x15`)**: Contêiner binário `0x55AA` LE empacotado com tabela de offsets e eventos de 4 bytes (`Type 10` HID, `9` Modificador, `1` Botão Mouse, `4/5` Movimento X/Y relativo).
+  - **Audio Sync (`crates/ajazz-protocol/src/audio.rs`, Modo `0x1D -> 0xFE`)**: Pipeline zero-alloc derivado do `AudioRecord.exe` + executável oficial (`FFT radix-2 1024`, 25 bandas espectrais com fluxo/desvio-padrão, decaimento por tecla de `sub_4b4c70`, 7 estilos `0..=6`: `VerticalBars`, `RainbowPulse`, `CenterWave`, `ConcentricRings`, `PeakDrop`, `HorizontalBars`, `ZigZagBars` e fundo configurável).
 - **Daemon (`ajazz-daemon`):**
-  - `UserProfile` estendido com `system`, `keymap` e `macros` retrocompatíveis (`#[serde(default)]`).
-  - Novos comandos IPC (`SetSystemStages`, `SetKeyAssignment`, `ResetKeymap`, `UpsertMacro`, `DeleteMacro`, `SyncFromDevice`), mantendo proteção contra hot-unplug e preservando `SystemStages` em todas as chamadas de iluminação.
+  - `UserProfile` estendido com `system`, `keymap`, `macros` e campos `audio_style`/`audio_bg_enabled`/`audio_bg_color` retrocompatíveis (`#[serde(default)]`).
+  - Capturador WASAPI loopback nativo (`crates/ajazz-daemon/src/audio_capture.rs`, COM FFI zero dependências extras e buffers fixos `[f32; 1024]`) enviando quadros via `Opcode 0x12` (~30 FPS, skip em silêncio estável).
+  - `PlayGif` / `StopGif` / `RenderFrame` reativados usando `0xFE` uma única vez no início e streaming em RAM volátil via `Opcode 0x12` (zero escrita flash `0x0B`/`0x02` em loop), restaurando o efeito anterior no `StopGif`.
 - **Interface Gráfica Nativa (`ajazz-gui`):**
   - Sub-abas em `AK820 RGB` (`Iluminação`, `Remapear Teclas`, `Macros`, `Sistema`) mantendo o teclado 82 teclas fixo no topo (`980x680` travado) com destaque de seleção e ponto indicador de remapeamento.
-  - Editor de Keymap por categorias + captura de tecla física (`FocusScope`), Editor/Gravador híbrido de Macros ao vivo + manual e sub-aba Sistema com alerta visual para `WFlag` (`WASD ↔ Setas`) e botão `Sincronizar do Teclado (0x05)`.
-- **Validação de Hardware Concluída:** Smoke test físico aprovado pelo usuário no AK820 — `WinLock`, `WASD ↔ Setas`, `Polling Rate`, remapeamento de teclas (`0x09`), gravação/vinculação de macros (`0x15`) e `Sincronizar do Teclado (0x05)` funcionando corretamente.
+  - Modo `Audio` na 21ª vaga da grade `7×3` com linha contextual dos 7 estilos + toggle/cor de fundo, e barra compacta `GIF LIVE` (seletor nativo Windows `GetOpenFileNameW`, FPS `15/25/30` e `PLAY/PARAR GIF` sincronizado com o Daemon).
+- **Validação:** Suíte completa de testes unitários e integração verde nos 3 crates (`ajazz-protocol`, `ajazz-daemon`, `ajazz-gui`) e `cargo clippy --workspace --all-targets`; pendente smoke test físico de Audio Sync e GIF Player pelo usuário.
 
 ---
 
@@ -54,6 +56,6 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ## 4. Próximos Passos Imediatos
 
-1. Reavaliar e reativar **GIF Player** e implementar **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (RAM segura, sem piscada nem desgaste de Flash).
+1. Smoke test físico pelo usuário do **Audio Sync** (7 estilos + fundo) e do **GIF Player (`0x12`)** no AK820.
 2. Adicionar simulação animada em tempo real dos efeitos RGB na própria **GUI** (`KeyboardView`).
 3. Escolher a próxima frente de expansão: engenharia reversa do **Mouse NearLink** (`0x7768:0x642E`) ou detector de **Switch Chattering** + filtros de diagnóstico.

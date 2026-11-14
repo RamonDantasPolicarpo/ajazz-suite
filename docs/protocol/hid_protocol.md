@@ -274,3 +274,30 @@ Valores de `Type` observados no executável oficial:
 - **`Type = 9` (`0x09`) — Tecla Modificadora**: `button` = bitmask de modificador (`0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80`, coluna `[3]` de `0x6c5e20`; `0x89` down / `0x09` up).
 - **`Type = 1` (`0x01`) — Botão do Mouse**: `button` ∈ `{0x01 Left, 0x02 Right, 0x04 Middle, 0x08 Back, 0x10 Forward}` (`0x81` down / `0x01` up).
 - **`Type = 4` / `5` (`0x04` / `0x05`) — Movimento Relativo Mouse X / Y**: bit 7 indica sentido (`0x84` = Esquerda `-X`, `0x04` = Direita `+X`; `0x85` = Cima `-Y`, `0x05` = Baixo `+Y`), `button` = delta `u8`.
+
+
+---
+
+### 2.11 Sincronia de Áudio (`Mode 0x1D` / `Audio Sync`) e Streaming GIF Volátil (`Opcode 0x12`)
+
+Descoberta por engenharia reversa estática em `AJAZZ AK820 有线RGB Keyboard.exe` e `AudioRecord.exe`:
+
+1. **Canal HID e Prevenção de Desgaste de Flash**:
+   - Tanto `Audio` (`mode = 0x1D` / `29`) quanto `Capture` (`mode = 0x1E` / `30`) ativam o **Modo Live `0xFE`** nos opcodes `0x05`/`0x06` (`sub_492ee0`) e transmitem matrizes voláteis de `126 × 3` (`378` bytes / `0x17a`) via **Opcode `0x12`** (`sub_47ab30`) diretamente na RAM do controlador.
+   - O **Player de GIF** também deve ativar o modo volátil `0xFE` uma única vez ao iniciar e enviar cada quadro via `Opcode 0x12` (`send_live_matrix`), evitando completamente `0x0B` + `0x02` em loop para preservar a memória Flash do MCU.
+
+2. **Pipeline de Áudio (`AudioRecord.exe` -> `AJAZZ AK820.exe`)**:
+   - **Captura WASAPI Loopback (`sub_401cf0`, `sub_401570`)**: lê janelas de `1024` amostras PCM, executa FFT radix-2 (`sub_401930`, `N = 1024`) e calcula magnitudes de `499` bins úteis (`1..500`, sem DC) com fator `1.0 / 1024.0` (`0x4160e8`), enviando `500 × u32` via `WM_COPYDATA` (`dwData = 1`, `cbData = 0x7d0`).
+   - **Extração de 25 Bandas (`sub_46ed10`, `sub_46f630`, `sub_4a04e0`)**: calcula `|curr[i] - prev[i]|`, agrupa `25` bandas consecutivas de `5` bins (`0..124`) e calcula a variação padrão por banda (escala nominal `0..2000` / `0x7d0`).
+
+3. **Grade Física `23 × 6` (`0x6828c0`) e Renderização de Estilos (`sub_4966c0`)**:
+   - **Grade `.rdata` (`0x6828c0`, `138` bytes = `23 colunas × 6 linhas`)**: mapeia `grid[col * 6 + row] -> physical_key_idx` (`0..125`, sentinela `0xAA` = célula vazia).
+   - **Estilos despachados em `sub_4966c0`** (`this + 0x1b04`):
+     - `0` (`sub_496790`): Barras verticais em `23` colunas × `6` linhas.
+     - `1` (`sub_498b60`): Pulso arco-íris por tecla.
+     - `2` (`sub_497660`): Onda central dividida na coluna `9`.
+     - `3` (`sub_497bf0`): Anéis concêntricos usando tabela `12 × 12` em `0x6826c8`.
+     - `4` (`sub_497ec0`): Barras verticais com retenção/gravidade de pico.
+     - `5` (`sub_496c30`): Barras horizontais (`6` linhas, grupos `[2, 3, 3, 4, 5, 7]`).
+     - `6` (`sub_498350`): Zig-zag horizontal alternado por paridade da linha (`[2, 2, 3, 4, 5, 5]`).
+   - **Paleta & Decaimento**: usa `BRIGHTNESS_LUT` em `0x682ec0` (`[0, 63, 126, 190, 255]`), paleta arco-íris de `192 × 3` bytes em `0x681cf8` e decaimento por tecla em `sub_4b4c70` (`-45` a `-1` por tick em modo `0x1D`).

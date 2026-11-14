@@ -126,7 +126,7 @@ export component LightingControls inherits Rectangle {
     in property <[string]> mode-labels: [
         "Normal", "Corrugated", "Cloud", "Serpentine", "Spectrum", "Breath", "Reaction",
         "Ripples", "Traverse", "Stars", "Flowers", "Roll", "Wave", "Cartoon",
-        "Rain", "Scan", "Surmount", "Speed", "Capture", "Custom"
+        "Rain", "Scan", "Surmount", "Speed", "Capture", "Audio", "Custom"
     ];
     in-out property <int> active-mode-index: 0;
     in-out property <int> brightness: 4;
@@ -136,6 +136,18 @@ export component LightingControls inherits Rectangle {
     in-out property <int> zzcc-mode: 0;
     in-out property <int> custom-bank: 0;
     in-out property <bool> custom-eraser: false;
+
+    in property <[string]> audio-style-labels: [
+        "V-Bar", "Pulse", "Center", "Rings", "Peak", "H-Bar", "ZigZag"
+    ];
+    in-out property <int> audio-style: 0;
+    in-out property <bool> audio-bg-enabled: false;
+    in-out property <color> audio-bg-color: #000000;
+
+    in-out property <string> gif-file-name: "Nenhum .gif selecionado";
+    in-out property <bool> gif-has-file: false;
+    in-out property <int> gif-fps: 25;
+    in-out property <bool> is-playing-gif: false;
 
     in-out property <color> selected-color: #FF0000;
     in-out property <string> hex-text: "#FF0000";
@@ -152,6 +164,7 @@ export component LightingControls inherits Rectangle {
     in property <string> dir-reverse-label: "R → L";
     in property <bool> supports-zzcc: false;
     in property <bool> is-custom-mode: false;
+    in property <bool> is-audio-mode: false;
 
     callback mode-selected(int);
     callback brightness-changed(int);
@@ -162,6 +175,12 @@ export component LightingControls inherits Rectangle {
     callback custom-bank-selected(int);
     callback custom-fill-all();
     callback custom-clear-all();
+    callback audio-style-selected(int);
+    callback audio-bg-toggled(bool);
+    callback audio-bg-use-current();
+    callback gif-browse-clicked();
+    callback gif-fps-selected(int);
+    callback gif-play-toggle();
     callback swatch-clicked(color);
     callback hex-submitted(string);
     callback rgb-submitted(string, string, string);
@@ -175,17 +194,17 @@ export component LightingControls inherits Rectangle {
     border-width: 1px;
 
     VerticalLayout {
-        padding: 14px;
-        spacing: 10px;
+        padding: 12px;
+        spacing: 8px;
 
-        // 1. Grade de Seleção dos 19 Efeitos Nativos + Modo Custom (7x3)
+        // 1. Grade de Seleção dos 21 Efeitos (Firmware + Live Capture/Audio + Custom, 7x3)
         VerticalLayout {
             spacing: 4px;
 
             HorizontalLayout {
                 alignment: space-between;
                 Text {
-                    text: "LIGHTING EFFECTS (FIRMWARE + CUSTOM)";
+                    text: "LIGHTING EFFECTS (FIRMWARE + AUDIO/LIVE + CUSTOM)";
                     font-family: Theme.mono-font;
                     font-size: 9px;
                     font-weight: 700;
@@ -218,7 +237,7 @@ export component LightingControls inherits Rectangle {
             }
             HorizontalLayout {
                 spacing: 4px;
-                for i in [14, 15, 16, 17, 18, 19] : ModeChip {
+                for i in [14, 15, 16, 17, 18, 19, 20] : ModeChip {
                     label: root.mode-labels[i];
                     active: root.active-mode-index == i;
                     clicked => { root.mode-selected(i); }
@@ -360,7 +379,37 @@ export component LightingControls inherits Rectangle {
                 }
             }
 
-            if (!root.supports-direction && !root.supports-zzcc && !root.is-custom-mode) : Text {
+            if (root.is-audio-mode) : HorizontalLayout {
+                spacing: 4px;
+                for s in [0, 1, 2, 3, 4, 5, 6] : StepPill {
+                    pill-width: 58px;
+                    text: root.audio-style-labels[s];
+                    active: root.audio-style == s;
+                    clicked => { root.audio-style-selected(s); }
+                }
+                Rectangle { width: 4px; }
+                StepPill {
+                    pill-width: 82px;
+                    text: root.audio-bg-enabled ? "FUNDO: ON" : "FUNDO: OFF";
+                    active: root.audio-bg-enabled;
+                    clicked => { root.audio-bg-toggled(!root.audio-bg-enabled); }
+                }
+                Rectangle {
+                    width: 24px;
+                    height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: root.audio-bg-color;
+                    border-color: bg-swatch-ta.has-hover ? Theme.text-primary : Theme.border-light;
+                    border-width: 1px;
+                    opacity: root.audio-bg-enabled ? 1.0 : 0.45;
+
+                    bg-swatch-ta := TouchArea {
+                        clicked => { root.audio-bg-use-current(); }
+                    }
+                }
+            }
+
+            if (!root.supports-direction && !root.supports-zzcc && !root.is-custom-mode && !root.is-audio-mode) : Text {
                 text: root.supports-color ? "Clique na amostra de cor para abrir o seletor HSV contínuo." : "Este efeito utiliza paleta automática do firmware.";
                 font-family: Theme.mono-font;
                 font-size: 9px;
@@ -462,6 +511,103 @@ export component LightingControls inherits Rectangle {
 
                 apply-ta := TouchArea {
                     clicked => { root.apply-clicked(); }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // 5. Barra Compacta GIF Player (RAM volátil Opcode 0x12)
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                Text {
+                    text: "GIF LIVE:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+
+                StepPill {
+                    pill-width: 98px;
+                    text: "PROCURAR .GIF";
+                    clicked => { root.gif-browse-clicked(); }
+                }
+
+                Rectangle {
+                    width: 248px;
+                    height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.background;
+                    border-color: Theme.border;
+                    border-width: 1px;
+
+                    Text {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height;
+                        text: root.gif-file-name;
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: root.gif-has-file ? Theme.text-primary : Theme.text-muted;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: end;
+
+                Text {
+                    text: "FPS:";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+
+                for fps in [15, 25, 30] : StepPill {
+                    pill-width: 34px;
+                    text: fps;
+                    active: root.gif-fps == fps;
+                    clicked => { root.gif-fps-selected(fps); }
+                }
+
+                Rectangle {
+                    width: 92px;
+                    height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: root.is-playing-gif
+                        ? (gif-play-ta.has-hover ? #4A2226 : #3A1A1D)
+                        : (gif-play-ta.has-hover ? Theme.surface-hover : Theme.surface-active);
+                    border-color: root.is-playing-gif ? Theme.status-error : Theme.border-light;
+                    border-width: 1px;
+                    opacity: (root.gif-has-file || root.is-playing-gif) ? 1.0 : 0.4;
+
+                    Text {
+                        text: root.is-playing-gif ? "PARAR GIF" : "PLAY GIF";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: root.is-playing-gif ? Theme.status-error : Theme.text-primary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    gif-play-ta := TouchArea {
+                        enabled: root.gif-has-file || root.is-playing-gif;
+                        clicked => { root.gif-play-toggle(); }
+                    }
                 }
             }
         }
