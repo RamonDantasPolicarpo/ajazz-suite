@@ -4,19 +4,19 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Correções Críticas de Protocolo, Custom, GUI/IPC e Modo Capture (0x12) CONCLUÍDAS
+## 1. Posição Atual: Paridade de SystemStages (0x05/0x06), Remapeamento (0x03/0x1B/0x07/0x09) e Macros (0x15) IMPLEMENTADA
 
-- **Correções Baseadas em Evidências (`ajazz-protocol`):**
-  - **Bug WASD ↔ Setas (`WFlag`) corrigido**: `sub_492b30` / `sub_44ab70` mostraram que `payload[27]` (`0x1B`) é `WFlag` (`0` normal, `1` troca WASD↔Setas) e `payload[28]` (`0x1C`) é `Key6Flag` (`0xFF`). Pacote `Opcode 0x06` agora alinha byte-a-byte com o `Frame 117` oficial de `ak820_red.pcapng`.
-  - **Custom `Opcode 0x0B` + ACK HID + `RCtrl=93`**: `apply_custom_bank` agora normaliza `multicolor = false`, fecha primeiro `0x01 -> 0x06 -> 0x02` e envia os 7 pacotes `0x0B` aguardando ACK HID (`sub_4781c0`) após cada pacote; `AK820_KEY_LAYOUT[78]` (`RCtrl`, `light_id=112`) corrigido para `phys_led = 93` (`0x5D` em `sub_49ef80`).
-  - **Canal Volátil `Opcode 0x12`**: Implementado `build_live_matrix_packets` / `send_live_matrix` (`378` bytes, escala `BRIGHTNESS_LUT = [0, 63, 126, 190, 255]`, zero gravações em flash `0x01`/`0x02`).
-- **Daemon em Segundo Plano (`ajazz-daemon`):**
-  - Captura de tela nativa leve em Windows via Win32 GDI (`screen_capture.rs`, buffer estático `32x12` zero-alocação) transmitida em ~20 FPS via `Opcode 0x12` quando o modo `Capture` (`0xFE`) está ativo, com cancelamento automático ao trocar de modo ou desconectar USB.
-  - Persistência de **User Profile** em `%APPDATA%\ajazz-companion\config.json` (`profile_store.rs`).
+- **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
+  - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
+  - **Keymap (`Opcode 0x03`, `0x1B`, `0x07`, `0x09`)**: Descoberta dinâmica de `total_keys` e blocos de macro (`0x03`), mapa `led_map[hw_key_idx] == phys_led` (`0x1B`), leitura base da `KeyMatrix` (`0x07`), registros de 3 bytes Big-Endian (`Tecla/Combo`, `Mouse`, `Mídia/Consumer`, `Sistema ACPI`, `Macro 0x70/0x71`, `Camada`, `Fn`, `Desabilitar`) com `AK820_FACTORY_ASSIGNMENTS` (82 teclas) e escrita fechada em transação (`0x01 -> 0x09 -> 0x02`).
+  - **Macros (`Opcode 0x15`)**: Contêiner binário `0x55AA` LE empacotado com tabela de offsets e eventos de 4 bytes (`Type 10` HID, `9` Modificador, `1` Botão Mouse, `4/5` Movimento X/Y relativo).
+- **Daemon (`ajazz-daemon`):**
+  - `UserProfile` estendido com `system`, `keymap` e `macros` retrocompatíveis (`#[serde(default)]`).
+  - Novos comandos IPC (`SetSystemStages`, `SetKeyAssignment`, `ResetKeymap`, `UpsertMacro`, `DeleteMacro`, `SyncFromDevice`), mantendo proteção contra hot-unplug e preservando `SystemStages` em todas as chamadas de iluminação.
 - **Interface Gráfica Nativa (`ajazz-gui`):**
-  - Canal IPC migrado de `std::sync::mpsc` bloqueante no `tokio::select!` para `tokio::sync::mpsc::unbounded_channel`, evitando travamentos de status/comandos.
-  - Aplicação imediata e consistente para todos os controles visuais (modo, brilho, velocidade, direção, swatches, HSV com commit automático ao soltar/fechar popover, e Custom preservando brilho e `multicolor = false`); botão `Aplicar` mantém confirmação de digitação manual HEX/RGB.
-- **Validação de Hardware Concluída:** Smoke test físico aprovado pelo usuário — WASD/Setinhas normais, modo Custom por tecla correto, resposta imediata/consistente dos controles na GUI e modo Capture (`0x12`) espelhando a tela em tempo real sem piscar.
+  - Sub-abas em `AK820 RGB` (`Iluminação`, `Remapear Teclas`, `Macros`, `Sistema`) mantendo o teclado 82 teclas fixo no topo (`980x680` travado) com destaque de seleção e ponto indicador de remapeamento.
+  - Editor de Keymap por categorias + captura de tecla física (`FocusScope`), Editor/Gravador híbrido de Macros ao vivo + manual e sub-aba Sistema com alerta visual para `WFlag` (`WASD ↔ Setas`) e botão `Sincronizar do Teclado (0x05)`.
+- **Pendente de Validação Física:** Smoke test no teclado físico AK820 para testar remapeamento, gravação de macro (`0x15`), `WinLock` / `PollingRate` e `Sincronizar do Teclado (0x05)`.
 
 ---
 
@@ -47,12 +47,13 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `2c8663c`: `feat: implement custom per-key rgb matrix, 25 fps gif player, and native gui controls`
 - `112df72`: `chore: disable gif streaming due to hardware flicker and remove gif tab from gui`
 - `5cac230`: `docs: align domain glossary, adr-0002 and lighting parity requirements`
-- `[atual]`: paridade completa do subsistema de iluminação AK820 (19 efeitos + Custom 3 bancos + persistência JSON + GUI travada).
+- `3c5ed87`: paridade completa do subsistema de iluminação AK820 (19 efeitos + Custom 3 bancos + Capture `0x12` + persistência JSON + GUI travada).
+- `[atual]`: paridade de `SystemStages` (`0x05`/`0x06`), Remapeamento de Teclas (`0x03`/`0x1B`/`0x07`/`0x09`) e Macros (`0x15` `0x55AA`) em todo o workspace (`protocol`, `daemon`, `gui`).
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. Versionar as correções validadas (`fix:` cobrindo `WFlag`, `Custom 0x0B + ACK + RCtrl=93`, canal volátil `0x12` Capture e ergonomia GUI/IPC).
-2. Reavaliar no futuro **GIF Player** e **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (comprovadamente seguro em RAM e sem piscada, substituindo o `0x0B` antigo).
-3. Escolher a próxima frente principal de paridade oficial ou novo módulo: Keymap / Macros / SystemStages (`WinLock`, `PollingRate`, `Debounce`), simulação de efeitos na GUI, ou `Mouse NearLink` / `Switch Chattering`.
+1. Validar fisicamente no AK820: `WinLock`, `WFlag`, `PollingRate`, remapeamento de tecla (`0x09`), gravação de macro (`0x15`) e `Sincronizar do Teclado (0x05)`.
+2. Reavaliar **GIF Player** e **Audio Sync (`audiorecord`)** usando o canal volátil `Opcode 0x12` (comprovadamente seguro em RAM e sem piscada, substituindo o `0x0B` antigo).
+3. Próximas frentes opcionais: simulação animada de efeitos na GUI, módulo **Mouse NearLink** (`0x7768:0x642E`), ou **Switch Chattering**.

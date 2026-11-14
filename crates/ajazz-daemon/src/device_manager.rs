@@ -3,9 +3,10 @@ use crate::profile_store::{load_profile, save_profile};
 use crate::screen_capture::ScreenCapturer;
 use ajazz_protocol::hidapi;
 use ajazz_protocol::{
-    Ak820Device, LightingConfig, LightingMode, RgbColor, UserProfile, PROFILE_AK820,
-    TOTAL_PHYSICAL_LEDS,
+    Ak820Device, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
+    SystemStages, UserProfile, PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
 };
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -27,6 +28,16 @@ pub enum DeviceCommand {
     SetLighting(LightingConfig, oneshot::Sender<Result<(), String>>),
     SetCustomBank(u8, Vec<RgbColor>, oneshot::Sender<Result<(), String>>),
     SelectCustomBank(u8, oneshot::Sender<Result<(), String>>),
+    SetSystemStages(SystemStages, oneshot::Sender<Result<(), String>>),
+    SetKeyAssignment(
+        u16,
+        Option<KeyAssignment>,
+        oneshot::Sender<Result<(), String>>,
+    ),
+    ResetKeymap(oneshot::Sender<Result<(), String>>),
+    UpsertMacro(MacroDefinition, oneshot::Sender<Result<(), String>>),
+    DeleteMacro(String, oneshot::Sender<Result<(), String>>),
+    SyncFromDevice(oneshot::Sender<Result<(), String>>),
     PlayGif(String, u8, oneshot::Sender<Result<(), String>>),
     StopGif(oneshot::Sender<Result<(), String>>),
     RenderFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
@@ -161,6 +172,125 @@ pub async fn run_device_actor(
                     bank,
                     None,
                 );
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::SetSystemStages(sys, resp) => {
+                let result = apply_system_command(&mut device, &mut hid_api, &mut profile, sys);
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::SetKeyAssignment(phys_led, assignment_opt, resp) => {
+                let mut next_keymap = profile.keymap.clone();
+                if let Some(a) = assignment_opt {
+                    next_keymap.insert(phys_led, a);
+                } else {
+                    next_keymap.remove(&phys_led);
+                }
+                let next_macros = profile.macros.clone();
+                let result = apply_keymap_command(
+                    &mut device,
+                    &mut hid_api,
+                    &mut profile,
+                    next_keymap,
+                    next_macros,
+                );
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::ResetKeymap(resp) => {
+                let next_macros = profile.macros.clone();
+                let result = apply_keymap_command(
+                    &mut device,
+                    &mut hid_api,
+                    &mut profile,
+                    BTreeMap::new(),
+                    next_macros,
+                );
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::UpsertMacro(macro_def, resp) => {
+                let target_id = macro_def.id.clone();
+                let mut next_macros = profile.macros.clone();
+                if let Some(existing) = next_macros.iter_mut().find(|m| m.id == target_id) {
+                    *existing = macro_def;
+                } else {
+                    next_macros.push(macro_def);
+                }
+                let is_referenced = profile.keymap.values().any(|a| {
+                    matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &target_id)
+                });
+                let result = if is_referenced {
+                    let next_keymap = profile.keymap.clone();
+                    apply_keymap_command(
+                        &mut device,
+                        &mut hid_api,
+                        &mut profile,
+                        next_keymap,
+                        next_macros,
+                    )
+                } else {
+                    profile.macros = next_macros;
+                    save_profile(&profile);
+                    Ok(())
+                };
+                let _ = resp.send(result);
+            }
+
+            DeviceCommand::DeleteMacro(id, resp) => {
+                let next_macros: Vec<MacroDefinition> = profile
+                    .macros
+                    .iter()
+                    .filter(|m| m.id != id)
+                    .cloned()
+                    .collect();
+                let mut next_keymap = profile.keymap.clone();
+                let had_ref = next_keymap.values().any(
+                    |a| matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &id),
+                );
+                if had_ref {
+                    next_keymap.retain(|_, a| {
+                        !matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &id)
+                    });
+                    let result = apply_keymap_command(
+                        &mut device,
+                        &mut hid_api,
+                        &mut profile,
+                        next_keymap,
+                        next_macros,
+                    );
+                    let _ = resp.send(result);
+                } else {
+                    profile.macros = next_macros;
+                    save_profile(&profile);
+                    let _ = resp.send(Ok(()));
+                }
+            }
+
+            DeviceCommand::SyncFromDevice(resp) => {
+                let result = match ensure_connected(&mut device, &mut hid_api) {
+                    Ok(dev) => match dev.read_config() {
+                        Ok((cfg, sys)) => {
+                            cancel_active_streams(&mut gif_cancel_tx, &mut capture_stop);
+                            profile.lighting = cfg;
+                            profile.system = sys;
+                            profile.normalize();
+                            save_profile(&profile);
+                            if profile.lighting.mode == LightingMode::Capture {
+                                capture_stop = Some(start_capture_streamer(cmd_tx.clone()));
+                            }
+                            info!("Configuração sincronizada a partir do teclado via 0x05.");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            warn!("Falha ao ler configuração do teclado via 0x05: {e}");
+                            device = None;
+                            Err(format!("Falha ao sincronizar com o teclado: {e}"))
+                        }
+                    },
+                    Err(e) => Err(e),
+                };
                 let _ = resp.send(result);
             }
 
@@ -320,7 +450,7 @@ fn apply_lighting_command(
     cfg: LightingConfig,
 ) -> Result<(), String> {
     let dev = ensure_connected(device, hid_api)?;
-    match dev.apply_lighting(&cfg) {
+    match dev.apply_config(&cfg, &profile.system) {
         Ok(()) => {
             profile.lighting = cfg;
             profile.normalize();
@@ -346,6 +476,63 @@ fn apply_lighting_command(
     }
 }
 
+fn apply_system_command(
+    device: &mut Option<Ak820Device>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+    system: SystemStages,
+) -> Result<(), String> {
+    let dev = ensure_connected(device, hid_api)?;
+    match dev.apply_config(&profile.lighting, &system) {
+        Ok(()) => {
+            profile.system = system;
+            profile.normalize();
+            save_profile(profile);
+            info!(
+                "SystemStages aplicados (WinLock={}, WFlag={}, Polling={})",
+                system.win_lock,
+                system.wasd_swap,
+                system.polling_rate.label()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao aplicar SystemStages no USB: {e}");
+            *device = None;
+            Err(format!("Erro de comunicação USB: {e}"))
+        }
+    }
+}
+
+fn apply_keymap_command(
+    device: &mut Option<Ak820Device>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    profile: &mut UserProfile,
+    keymap: BTreeMap<u16, KeyAssignment>,
+    macros: Vec<MacroDefinition>,
+) -> Result<(), String> {
+    let dev = ensure_connected(device, hid_api)?;
+    match dev.apply_keymap_and_macros(&keymap, &macros) {
+        Ok(()) => {
+            profile.keymap = keymap;
+            profile.macros = macros;
+            profile.normalize();
+            save_profile(profile);
+            info!(
+                "Keymap ({} overrides) e Macros ({}) aplicados no teclado.",
+                profile.keymap.len(),
+                profile.macros.len()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao gravar Keymap/Macros no USB: {e}");
+            *device = None;
+            Err(format!("Erro ao gravar Keymap/Macros: {e}"))
+        }
+    }
+}
+
 fn apply_custom_command(
     device: &mut Option<Ak820Device>,
     hid_api: &mut Option<hidapi::HidApi>,
@@ -363,7 +550,7 @@ fn apply_custom_command(
     let matrix = profile.bank_array(bank_idx);
 
     let dev = ensure_connected(device, hid_api)?;
-    match dev.apply_custom_bank(&cfg, &matrix) {
+    match dev.apply_custom_bank_with_system(&cfg, &profile.system, &matrix) {
         Ok(()) => {
             profile.lighting = cfg;
             profile.normalize();

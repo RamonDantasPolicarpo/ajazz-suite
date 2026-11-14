@@ -1,24 +1,51 @@
 slint::include_modules!();
 
 mod ipc_client;
+mod keymap_ui;
 
 use ajazz_protocol::{
-    DirectionKind, LightingConfig, LightingDirection, LightingMode, RgbColor, UserProfile,
-    AK820_KEY_LAYOUT, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
+    DirectionKind, KeyAssignment, LightingConfig, LightingDirection, LightingMode, MacroAction,
+    MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor, UserProfile, AK820_KEY_LAYOUT,
+    HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
 };
 use ipc_client::{send_request, IpcRequest, IpcResponse};
 use slint::{Color, ComponentHandle, Image, ModelRc, Rgb8Pixel, SharedPixelBuffer, SharedString, VecModel};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-struct GuiState {
-    profile: UserProfile,
-    synced_initial: bool,
-    hue: f32,
-    sat: f32,
-    val: f32,
+pub struct GuiState {
+    pub profile: UserProfile,
+    pub synced_initial: bool,
+    pub force_resync: bool,
+    pub hue: f32,
+    pub sat: f32,
+    pub val: f32,
+    pub selected_macro_idx: i32,
+    pub draft_macro_id: String,
+    pub draft_macro_name: String,
+    pub draft_macro_steps: Vec<MacroStep>,
+    pub last_record_instant: Option<Instant>,
+}
+
+impl GuiState {
+    fn new(profile: UserProfile) -> Self {
+        let (hue, sat, val) = rgb_to_hsv(profile.lighting.color);
+        Self {
+            profile,
+            synced_initial: false,
+            force_resync: false,
+            hue,
+            sat,
+            val,
+            selected_macro_idx: -1,
+            draft_macro_id: String::new(),
+            draft_macro_name: String::new(),
+            draft_macro_steps: Vec::new(),
+            last_record_instant: None,
+        }
+    }
 }
 
 fn to_slint_color(c: RgbColor) -> Color {
@@ -200,6 +227,9 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
 
     let key_model = Rc::new(VecModel::from(compute_preview_colors(&st.profile)));
     ui.set_key_colors(ModelRc::from(key_model));
+
+    keymap_ui::sync_keymap_macros_system_to_ui(ui, st);
+    keymap_ui::sync_macro_draft_to_ui(ui, st);
 }
 
 fn update_color_and_hsv(st: &mut GuiState, color: RgbColor, update_hsv: bool) {
@@ -267,21 +297,18 @@ fn dispatch_lighting(tx: &mpsc::UnboundedSender<IpcRequest>, mut cfg: LightingCo
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
-    let initial_profile = UserProfile::default();
-    let (h0, s0, v0) = rgb_to_hsv(initial_profile.lighting.color);
-    let state = Arc::new(Mutex::new(GuiState {
-        profile: initial_profile,
-        synced_initial: false,
-        hue: h0,
-        sat: s0,
-        val: v0,
-    }));
+    let state = Arc::new(Mutex::new(GuiState::new(UserProfile::default())));
+    let h0 = state.lock().unwrap().hue;
+    let s0 = state.lock().unwrap().sat;
+    let v0 = state.lock().unwrap().val;
 
     main_window.set_hsv_hue_image(render_hue_strip());
     main_window.set_hsv_sv_image(render_sv_square(h0));
     main_window.set_hsv_h(h0);
     main_window.set_hsv_s(s0);
     main_window.set_hsv_v(v0);
+    main_window.set_km_key_catalog_labels(keymap_ui::key_catalog_labels());
+    main_window.set_km_extra_action_labels(keymap_ui::extra_action_labels());
     {
         let st = state.lock().unwrap();
         sync_ui_from_state(&main_window, &st);
@@ -298,21 +325,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Falha ao criar runtime Tokio");
 
         rt.block_on(async move {
-            let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>| {
+            let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>| -> bool {
                 match resp {
                     Ok(IpcResponse::Status { device_connected, profile, .. }) => {
-                        let mut initial_sync = false;
+                        let mut should_sync_ui = false;
                         {
                             let mut st = state_ref.lock().unwrap();
-                            if !st.synced_initial {
+                            if !st.synced_initial || st.force_resync {
                                 st.profile = profile;
                                 st.profile.normalize();
                                 let (h, s, v) = rgb_to_hsv(st.profile.lighting.color);
                                 st.hue = h;
                                 st.sat = s;
                                 st.val = v;
+                                if !st.profile.macros.is_empty() && st.selected_macro_idx < 0 {
+                                    st.selected_macro_idx = 0;
+                                    st.draft_macro_id = st.profile.macros[0].id.clone();
+                                    st.draft_macro_name = st.profile.macros[0].name.clone();
+                                    st.draft_macro_steps = st.profile.macros[0].steps.clone();
+                                }
                                 st.synced_initial = true;
-                                initial_sync = true;
+                                st.force_resync = false;
+                                should_sync_ui = true;
                             }
                         }
                         let state_ui = Arc::clone(state_ref);
@@ -320,20 +354,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = ui_clone.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
                             ui.set_device_connected(device_connected);
-                            if initial_sync {
+                            if should_sync_ui {
                                 let st = state_ui.lock().unwrap();
                                 sync_ui_from_state(&ui, &st);
                             }
                         });
+                        false
                     }
-                    Ok(_) => {
+                    Ok(IpcResponse::Ok { message }) => {
+                        let _ = ui_w.upgrade_in_event_loop(move |ui| {
+                            ui.set_daemon_online(true);
+                            ui.set_feedback_text(SharedString::from(message));
+                            ui.set_feedback_is_error(false);
+                        });
+                        false
+                    }
+                    Ok(IpcResponse::Error { error }) => {
+                        {
+                            let mut st = state_ref.lock().unwrap();
+                            st.force_resync = true;
+                        }
+                        let _ = ui_w.upgrade_in_event_loop(move |ui| {
+                            ui.set_daemon_online(true);
+                            ui.set_feedback_text(SharedString::from(error));
+                            ui.set_feedback_is_error(true);
+                        });
+                        true
+                    }
+                    Ok(IpcResponse::Pong) => {
                         let _ = ui_w.upgrade_in_event_loop(|ui| ui.set_daemon_online(true));
+                        false
                     }
                     Err(_) => {
                         let _ = ui_w.upgrade_in_event_loop(|ui| {
                             ui.set_daemon_online(false);
                             ui.set_device_connected(false);
                         });
+                        false
                     }
                 }
             };
@@ -343,8 +400,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::select! {
                     Some(req) = rx.recv() => {
+                        let was_sync = matches!(req, IpcRequest::SyncFromDevice);
                         let resp = send_request(req).await;
-                        apply_status(resp, &state_ipc, &ui_weak_status);
+                        let need_refresh = apply_status(resp, &state_ipc, &ui_weak_status);
+                        if was_sync || need_refresh {
+                            if was_sync {
+                                state_ipc.lock().unwrap().force_resync = true;
+                            }
+                            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status);
+                        }
                     }
                     _ = tokio::time::sleep(Duration::from_millis(1500)) => {
                         let resp = send_request(IpcRequest::GetStatus).await;
@@ -714,6 +778,505 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // --- Callbacks de Keymap ---
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_keymap_key_clicked(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_selected_key_to_ui(&ui, &st.profile, idx.max(0) as usize);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_category_selected(move |cat| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_category(cat);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_toggle_modifier(move |bit| {
+            if let Some(ui) = ui_w.upgrade() {
+                let next = ui.get_km_draft_mod_mask() ^ bit;
+                ui.set_km_draft_mod_mask(next);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_select_catalog_key(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_key_idx(idx);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_capture_key_pressed(move |text, ctrl, shift, alt, meta| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            if let Some((entry_mod, entry_usage)) = keymap_ui::slint_key_to_hid_entry(&text) {
+                if let Some(idx) = HID_KEY_CATALOG
+                    .iter()
+                    .position(|e| e.modifiers == entry_mod && e.hid_usage == entry_usage)
+                {
+                    ui.set_km_draft_key_idx(idx as i32);
+                    if entry_usage != 0 {
+                        let mask = keymap_ui::modifier_mask_from_flags(ctrl, shift, alt, meta);
+                        ui.set_km_draft_mod_mask(mask as i32);
+                    } else {
+                        ui.set_km_draft_mod_mask(0);
+                    }
+                }
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_select_mouse_button(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_mouse_idx(idx);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_select_extra_action(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_extra_idx(idx);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_select_macro(move |idx| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_macro_idx(idx);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_select_macro_mode(move |mode| {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_km_draft_macro_mode(mode);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        main_window.on_km_change_macro_repeat(move |delta| {
+            if let Some(ui) = ui_w.upgrade() {
+                let next = (ui.get_km_draft_macro_repeat() + delta).clamp(1, 255);
+                ui.set_km_draft_macro_repeat(next);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_km_apply_clicked(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let layout_idx = ui.get_selected_key_idx().clamp(0, (VISIBLE_KEYS_COUNT - 1) as i32) as usize;
+            let phys_led = AK820_KEY_LAYOUT[layout_idx].phys_led as u16;
+            let assignment_opt = {
+                let mut st = st_c.lock().unwrap();
+                let Some(assignment) = keymap_ui::build_assignment_from_ui(&ui, &st.profile.macros) else {
+                    return;
+                };
+                st.profile.keymap.insert(phys_led, assignment.clone());
+                Some(assignment)
+            };
+            let st = st_c.lock().unwrap();
+            keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            let _ = tx_c.send(IpcRequest::SetKeyAssignment {
+                phys_led,
+                assignment: assignment_opt,
+            });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_km_reset_key_clicked(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let layout_idx = ui.get_selected_key_idx().clamp(0, (VISIBLE_KEYS_COUNT - 1) as i32) as usize;
+            let phys_led = AK820_KEY_LAYOUT[layout_idx].phys_led as u16;
+            {
+                let mut st = st_c.lock().unwrap();
+                st.profile.keymap.remove(&phys_led);
+            }
+            let st = st_c.lock().unwrap();
+            keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            let _ = tx_c.send(IpcRequest::SetKeyAssignment {
+                phys_led,
+                assignment: None,
+            });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_km_reset_all_clicked(move || {
+            {
+                let mut st = st_c.lock().unwrap();
+                st.profile.keymap.clear();
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            }
+            let _ = tx_c.send(IpcRequest::ResetKeymap);
+        });
+    }
+
+    // --- Callbacks de Macros ---
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_select(move |idx| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            if let Some(mac) = st.profile.macros.get(idx.max(0) as usize).cloned() {
+                st.selected_macro_idx = idx;
+                st.draft_macro_id = mac.id;
+                st.draft_macro_name = mac.name;
+                st.draft_macro_steps = mac.steps;
+                st.last_record_instant = None;
+                keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_new_clicked(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            let (id, name) = keymap_ui::next_macro_id(&st.profile.macros);
+            st.selected_macro_idx = -1;
+            st.draft_macro_id = id;
+            st.draft_macro_name = name;
+            st.draft_macro_steps.clear();
+            st.last_record_instant = None;
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_macro_delete_clicked(move || {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let deleted_id = {
+                let mut st = st_c.lock().unwrap();
+                let idx = st.selected_macro_idx;
+                if idx < 0 || (idx as usize) >= st.profile.macros.len() {
+                    return;
+                }
+                let removed = st.profile.macros.remove(idx as usize);
+                st.profile.keymap.retain(|_, a| {
+                    !matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &removed.id)
+                });
+                if let Some(first) = st.profile.macros.first().cloned() {
+                    st.selected_macro_idx = 0;
+                    st.draft_macro_id = first.id;
+                    st.draft_macro_name = first.name;
+                    st.draft_macro_steps = first.steps;
+                } else {
+                    st.selected_macro_idx = -1;
+                    st.draft_macro_id.clear();
+                    st.draft_macro_name.clear();
+                    st.draft_macro_steps.clear();
+                }
+                removed.id
+            };
+            let st = st_c.lock().unwrap();
+            keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            let _ = tx_c.send(IpcRequest::DeleteMacro { id: deleted_id });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_macro_save_clicked(move |name_raw| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let macro_def = {
+                let mut st = st_c.lock().unwrap();
+                let clean_name = name_raw.trim();
+                let (id, fallback_name) = if st.draft_macro_id.is_empty() {
+                    keymap_ui::next_macro_id(&st.profile.macros)
+                } else {
+                    (st.draft_macro_id.clone(), st.draft_macro_name.clone())
+                };
+                let final_name = if clean_name.is_empty() {
+                    if fallback_name.is_empty() { "Macro".to_string() } else { fallback_name }
+                } else {
+                    clean_name.to_string()
+                };
+                let def = MacroDefinition {
+                    id: id.clone(),
+                    name: final_name.clone(),
+                    steps: st.draft_macro_steps.clone(),
+                };
+                if let Some(pos) = st.profile.macros.iter().position(|m| m.id == id) {
+                    st.profile.macros[pos] = def.clone();
+                    st.selected_macro_idx = pos as i32;
+                } else {
+                    st.profile.macros.push(def.clone());
+                    st.selected_macro_idx = (st.profile.macros.len() - 1) as i32;
+                }
+                st.draft_macro_id = id;
+                st.draft_macro_name = final_name;
+                def
+            };
+            let st = st_c.lock().unwrap();
+            keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            let _ = tx_c.send(IpcRequest::UpsertMacro { macro_def });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_clear_steps_clicked(move || {
+            if let Some(ui) = ui_w.upgrade() {
+                let mut st = st_c.lock().unwrap();
+                st.draft_macro_steps.clear();
+                st.last_record_instant = None;
+                keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            }
+        });
+    }
+    {
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_toggle_recording(move |_rec| {
+            let mut st = st_c.lock().unwrap();
+            st.last_record_instant = None;
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_record_key_event(move |text, down, _c, _s, _a, _m| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let Some(action) = keymap_ui::macro_action_from_slint_key(&text, down) else {
+                return;
+            };
+            let use_fixed = ui.get_macro_use_fixed_delay();
+            let fixed_txt = ui.get_macro_fixed_delay_text().to_string();
+            let mut st = st_c.lock().unwrap();
+            let delay_ms = keymap_ui::compute_record_delay_ms(&mut st, use_fixed, &fixed_txt);
+            st.draft_macro_steps.push(MacroStep { delay_ms, action });
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_record_mouse_event(move |btn_idx, down| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let btn = match btn_idx {
+                1 => MouseButton::Right,
+                2 => MouseButton::Middle,
+                _ => MouseButton::Left,
+            };
+            let use_fixed = ui.get_macro_use_fixed_delay();
+            let fixed_txt = ui.get_macro_fixed_delay_text().to_string();
+            let mut st = st_c.lock().unwrap();
+            let delay_ms = keymap_ui::compute_record_delay_ms(&mut st, use_fixed, &fixed_txt);
+            st.draft_macro_steps.push(MacroStep {
+                delay_ms,
+                action: MacroAction::MouseButton { button: btn, down },
+            });
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_add_mouse_click(move |btn_idx| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let btn = match btn_idx {
+                1 => MouseButton::Right,
+                2 => MouseButton::Middle,
+                _ => MouseButton::Left,
+            };
+            let mut st = st_c.lock().unwrap();
+            st.draft_macro_steps.push(MacroStep {
+                delay_ms: 25,
+                action: MacroAction::MouseButton { button: btn, down: true },
+            });
+            st.draft_macro_steps.push(MacroStep {
+                delay_ms: 25,
+                action: MacroAction::MouseButton { button: btn, down: false },
+            });
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_add_mouse_move(move |dx_str, dy_str| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let dx = dx_str.trim().parse::<i16>().unwrap_or(0).clamp(-127, 127) as i8;
+            let dy = dy_str.trim().parse::<i16>().unwrap_or(0).clamp(-127, 127) as i8;
+            let mut st = st_c.lock().unwrap();
+            if dx != 0 {
+                st.draft_macro_steps.push(MacroStep {
+                    delay_ms: 15,
+                    action: MacroAction::MouseMoveX { delta: dx },
+                });
+            }
+            if dy != 0 {
+                st.draft_macro_steps.push(MacroStep {
+                    delay_ms: 15,
+                    action: MacroAction::MouseMoveY { delta: dy },
+                });
+            }
+            keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_adjust_step_delay(move |idx, delta| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            if let Some(step) = st.draft_macro_steps.get_mut(idx.max(0) as usize) {
+                let next = (step.delay_ms as i32 + delta).clamp(0, 65535) as u16;
+                step.delay_ms = next;
+                keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            }
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        main_window.on_macro_remove_step(move |idx| {
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
+            let mut st = st_c.lock().unwrap();
+            let u = idx.max(0) as usize;
+            if u < st.draft_macro_steps.len() {
+                st.draft_macro_steps.remove(u);
+                keymap_ui::sync_macro_draft_to_ui(&ui, &st);
+            }
+        });
+    }
+
+    // --- Callbacks de SystemStages & Sincronização ---
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_sys_toggle_win_lock(move |val| {
+            let sys = {
+                let mut st = st_c.lock().unwrap();
+                st.profile.system.win_lock = val;
+                st.profile.system
+            };
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            }
+            let _ = tx_c.send(IpcRequest::SetSystemStages { system: sys });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_sys_toggle_wasd_swap(move |val| {
+            let sys = {
+                let mut st = st_c.lock().unwrap();
+                st.profile.system.wasd_swap = val;
+                st.profile.system
+            };
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            }
+            let _ = tx_c.send(IpcRequest::SetSystemStages { system: sys });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_sys_select_polling_rate(move |idx| {
+            let rate = PollingRate::ALL
+                .get(idx.max(0) as usize)
+                .copied()
+                .unwrap_or(PollingRate::Hz1000);
+            let sys = {
+                let mut st = st_c.lock().unwrap();
+                st.profile.system.polling_rate = rate;
+                st.profile.system
+            };
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            }
+            let _ = tx_c.send(IpcRequest::SetSystemStages { system: sys });
+        });
+    }
+    {
+        let tx_c = tx.clone();
+        main_window.on_sys_sync_from_device(move || {
+            let _ = tx_c.send(IpcRequest::SyncFromDevice);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_sys_reset_keymap_factory(move || {
+            {
+                let mut st = st_c.lock().unwrap();
+                st.profile.keymap.clear();
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                let st = st_c.lock().unwrap();
+                keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
+            }
+            let _ = tx_c.send(IpcRequest::ResetKeymap);
+        });
+    }
+
     main_window.run()?;
     Ok(())
 }
@@ -725,13 +1288,7 @@ mod feedback_tests {
     #[test]
     fn bug3_hsv_pick_must_clear_multicolor_when_not_custom() {
         let ui = MainWindow::new().expect("MainWindow::new");
-        let mut st = GuiState {
-            profile: UserProfile::default(),
-            synced_initial: false,
-            hue: 0.0,
-            sat: 1.0,
-            val: 1.0,
-        };
+        let mut st = GuiState::new(UserProfile::default());
         sync_ui_from_state(&ui, &st);
 
         st.profile.lighting.mode = LightingMode::Wave;

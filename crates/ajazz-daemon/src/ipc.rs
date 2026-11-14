@@ -1,4 +1,6 @@
-use ajazz_protocol::{LightingConfig, RgbColor, UserProfile};
+use ajazz_protocol::{
+    KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
+};
 use serde::{Deserialize, Serialize};
 
 pub const IPC_PIPE_NAME: &str = r"\\.\pipe\ajazz-daemon";
@@ -23,6 +25,21 @@ pub enum IpcRequest {
     SelectCustomBank {
         bank: u8,
     },
+    SetSystemStages {
+        system: SystemStages,
+    },
+    SetKeyAssignment {
+        phys_led: u16,
+        assignment: Option<KeyAssignment>,
+    },
+    ResetKeymap,
+    UpsertMacro {
+        macro_def: MacroDefinition,
+    },
+    DeleteMacro {
+        id: String,
+    },
+    SyncFromDevice,
     PlayGif {
         path: String,
         fps: Option<u8>,

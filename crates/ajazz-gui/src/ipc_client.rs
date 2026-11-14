@@ -1,4 +1,6 @@
-use ajazz_protocol::{LightingConfig, RgbColor, UserProfile};
+use ajazz_protocol::{
+    KeyAssignment, LightingConfig, MacroDefinition, RgbColor, SystemStages, UserProfile,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -25,6 +27,21 @@ pub enum IpcRequest {
     SelectCustomBank {
         bank: u8,
     },
+    SetSystemStages {
+        system: SystemStages,
+    },
+    SetKeyAssignment {
+        phys_led: u16,
+        assignment: Option<KeyAssignment>,
+    },
+    ResetKeymap,
+    UpsertMacro {
+        macro_def: MacroDefinition,
+    },
+    DeleteMacro {
+        id: String,
+    },
+    SyncFromDevice,
     PlayGif {
         path: String,
         fps: Option<u8>,
@@ -68,7 +85,7 @@ pub async fn send_request(req: IpcRequest) -> Result<IpcResponse, String> {
         .await
         .map_err(|e| format!("Erro ao enviar requisição IPC: {e}"))?;
 
-    match tokio::time::timeout(Duration::from_millis(2000), lines.next_line()).await {
+    match tokio::time::timeout(Duration::from_millis(4000), lines.next_line()).await {
         Ok(Ok(Some(line))) => {
             serde_json::from_str::<IpcResponse>(&line)
                 .map_err(|e| format!("Resposta IPC inválida: {e}"))

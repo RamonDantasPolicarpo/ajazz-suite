@@ -2,8 +2,40 @@ import { Theme } from "theme.slint";
 import { Sidebar } from "sidebar.slint";
 import { KeyboardView } from "keyboard_view.slint";
 import { LightingControls } from "lighting_controls.slint";
+import { KeymapControls } from "keymap_controls.slint";
+import { MacroControls, MacroStepItem } from "macro_controls.slint";
+import { SystemControls } from "system_controls.slint";
 import { MouseView } from "mouse_view.slint";
 import { SettingsView } from "settings_view.slint";
+
+export { MacroStepItem }
+
+component SubTabPill inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    width: 118px;
+    height: 24px;
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface);
+    border-color: root.active ? Theme.border-light : Theme.border;
+    border-width: 1px;
+
+    Text {
+        text: root.label;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
 
 export component MainWindow inherits Window {
     title: "AJAZZ Companion Suite";
@@ -18,9 +50,44 @@ export component MainWindow inherits Window {
 
     // Estado da aplicação e User Profile sincronizado com Daemon
     in-out property <int> active-tab: 0;
+    in-out property <int> kb-subtab: 0; // 0=Iluminação, 1=Remap, 2=Macros, 3=Sistema
     in-out property <bool> daemon-online: false;
     in-out property <bool> device-connected: false;
     in-out property <string> chattering-alert: "";
+    in-out property <string> feedback-text: "";
+    in-out property <bool> feedback-is-error: false;
+
+    // Estado de Keymap
+    in-out property <int> selected-key-idx: 0;
+    in-out property <[bool]> remapped-keys: [];
+    in-out property <string> km-selected-key-name: "ESC";
+    in-out property <string> km-current-binding: "Padrão: Esc";
+    in-out property <bool> km-selected-remapped: false;
+    in-out property <int> km-draft-category: 0;
+    in-out property <int> km-draft-mod-mask: 0;
+    in-out property <int> km-draft-key-idx: 0;
+    in-out property <int> km-draft-mouse-idx: 0;
+    in-out property <int> km-draft-extra-idx: 0;
+    in-out property <int> km-draft-macro-idx: 0;
+    in-out property <int> km-draft-macro-mode: 0;
+    in-out property <int> km-draft-macro-repeat: 2;
+    in-out property <bool> km-capturing-key: false;
+    in-out property <[string]> km-key-catalog-labels: [];
+    in-out property <[string]> km-extra-action-labels: [];
+
+    // Estado de Macros
+    in-out property <[string]> macro-names: [];
+    in-out property <int> macro-selected-idx: -1;
+    in-out property <string> macro-draft-name: "";
+    in-out property <[MacroStepItem]> macro-draft-steps: [];
+    in-out property <bool> macro-recording: false;
+    in-out property <bool> macro-use-fixed-delay: false;
+    in-out property <string> macro-fixed-delay-text: "25";
+
+    // Estado de SystemStages (0x05 / 0x06)
+    in-out property <bool> sys-win-lock: false;
+    in-out property <bool> sys-wasd-swap: false;
+    in-out property <int> sys-polling-rate-idx: 0;
 
     in-out property <int> active-mode-index: 0;
     in-out property <int> brightness: 4;
@@ -77,6 +144,40 @@ export component MainWindow inherits Window {
     callback apply-clicked();
     callback reconnect-daemon();
 
+    // Callbacks Keymap / Macros / Sistema
+    callback keymap-key-clicked(int);
+    callback km-category-selected(int);
+    callback km-toggle-modifier(int);
+    callback km-select-catalog-key(int);
+    callback km-capture-key-pressed(string, bool, bool, bool, bool);
+    callback km-select-mouse-button(int);
+    callback km-select-extra-action(int);
+    callback km-select-macro(int);
+    callback km-select-macro-mode(int);
+    callback km-change-macro-repeat(int);
+    callback km-apply-clicked();
+    callback km-reset-key-clicked();
+    callback km-reset-all-clicked();
+
+    callback macro-select(int);
+    callback macro-new-clicked();
+    callback macro-delete-clicked();
+    callback macro-save-clicked(string);
+    callback macro-clear-steps-clicked();
+    callback macro-toggle-recording(bool);
+    callback macro-record-key-event(string, bool, bool, bool, bool, bool);
+    callback macro-record-mouse-event(int, bool);
+    callback macro-add-mouse-click(int);
+    callback macro-add-mouse-move(string, string);
+    callback macro-adjust-step-delay(int, int);
+    callback macro-remove-step(int);
+
+    callback sys-toggle-win-lock(bool);
+    callback sys-toggle-wasd-swap(bool);
+    callback sys-select-polling-rate(int);
+    callback sys-sync-from-device();
+    callback sys-reset-keymap-factory();
+
     HorizontalLayout {
         Sidebar {
             active-tab <=> root.active-tab;
@@ -88,8 +189,8 @@ export component MainWindow inherits Window {
 
             // Aba 0: Teclado AK820
             if (root.active-tab == 0) : VerticalLayout {
-                padding: 20px;
-                spacing: 10px;
+                padding: 14px;
+                spacing: 8px;
                 alignment: start;
 
                 // Título e status do hardware
@@ -98,7 +199,7 @@ export component MainWindow inherits Window {
                     alignment: space-between;
 
                     VerticalLayout {
-                        spacing: 2px;
+                        spacing: 1px;
                         alignment: center;
                         Text {
                             text: "AJAZZ AK820 75% MECHANICAL KEYBOARD";
@@ -108,10 +209,12 @@ export component MainWindow inherits Window {
                             color: Theme.text-primary;
                         }
                         Text {
-                            text: "EVision Semiconductor (VID 0x320F / PID 0x505B) • UsagePage 0xFF1C";
+                            text: root.feedback-text != ""
+                                ? root.feedback-text
+                                : "EVision Semiconductor (VID 0x320F / PID 0x505B) • UsagePage 0xFF1C";
                             font-family: Theme.mono-font;
                             font-size: 9px;
-                            color: Theme.text-secondary;
+                            color: root.feedback-is-error ? Theme.status-error : (root.feedback-text != "" ? Theme.status-online : Theme.text-secondary);
                         }
                     }
 
@@ -150,21 +253,58 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                // Barra de Sub-abas do Teclado
+                HorizontalLayout {
+                    width: 720px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SubTabPill { label: "Iluminação"; active: root.kb-subtab == 0; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 0; } }
+                        SubTabPill { label: "Remapear Teclas"; active: root.kb-subtab == 1; clicked => { root.macro-recording = false; root.kb-subtab = 1; } }
+                        SubTabPill { label: "Macros"; active: root.kb-subtab == 2; clicked => { root.km-capturing-key = false; root.kb-subtab = 2; } }
+                        SubTabPill { label: "Sistema"; active: root.kb-subtab == 3; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 3; } }
+                    }
+
+                    if (root.sys-wasd-swap) : Rectangle {
+                        height: 24px;
+                        width: 170px;
+                        border-radius: Theme.radius-sm;
+                        background: #3B3219;
+                        border-color: Theme.status-warning;
+                        border-width: 1px;
+
+                        Text {
+                            text: "⚠ WASD ↔ SETAS ATIVO";
+                            font-family: Theme.mono-font;
+                            font-size: 8px;
+                            font-weight: 700;
+                            color: Theme.status-warning;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+                }
+
                 // Layout Vetorial Físico das 82 Teclas
                 KeyboardView {
                     global-led-color: root.current-color;
                     has-led: root.brightness > 0;
                     key-colors: root.key-colors;
                     chattering-key: root.chattering-alert;
+                    selected-key-idx: root.kb-subtab == 1 ? root.selected-key-idx : -1;
+                    remapped-keys: root.remapped-keys;
                     key-clicked(key-idx) => {
-                        if (root.is-custom-mode) {
+                        if (root.kb-subtab == 0 && root.is-custom-mode) {
                             root.custom-key-clicked(key-idx, root.custom-eraser);
+                        } else if (root.kb-subtab == 1) {
+                            root.keymap-key-clicked(key-idx);
                         }
                     }
                 }
 
-                // Painel de Controles de Iluminação Completo
-                LightingControls {
+                // Sub-aba 0: Painel de Controles de Iluminação
+                if (root.kb-subtab == 0) : LightingControls {
                     active-mode-index <=> root.active-mode-index;
                     brightness <=> root.brightness;
                     speed <=> root.speed;
@@ -201,6 +341,76 @@ export component MainWindow inherits Window {
                     rgb-submitted(r, g, b) => { root.rgb-submitted(r, g, b); }
                     open-hsv-popover => { root.open-hsv-popover(); }
                     apply-clicked => { root.apply-clicked(); }
+                }
+
+                // Sub-aba 1: Remapear Teclas
+                if (root.kb-subtab == 1) : KeymapControls {
+                    selected-key-idx: root.selected-key-idx;
+                    selected-key-name: root.km-selected-key-name;
+                    current-binding-label: root.km-current-binding;
+                    is-selected-remapped: root.km-selected-remapped;
+                    draft-category <=> root.km-draft-category;
+                    draft-mod-mask <=> root.km-draft-mod-mask;
+                    draft-key-idx <=> root.km-draft-key-idx;
+                    draft-mouse-idx <=> root.km-draft-mouse-idx;
+                    draft-extra-idx <=> root.km-draft-extra-idx;
+                    draft-macro-idx <=> root.km-draft-macro-idx;
+                    draft-macro-mode <=> root.km-draft-macro-mode;
+                    draft-macro-repeat <=> root.km-draft-macro-repeat;
+                    capturing-key <=> root.km-capturing-key;
+                    key-catalog-labels: root.km-key-catalog-labels;
+                    extra-action-labels: root.km-extra-action-labels;
+                    macro-names: root.macro-names;
+
+                    category-selected(cat) => { root.km-category-selected(cat); }
+                    toggle-modifier(m) => { root.km-toggle-modifier(m); }
+                    select-catalog-key(i) => { root.km-select-catalog-key(i); }
+                    capture-key-pressed(t, c, s, a, m) => { root.km-capture-key-pressed(t, c, s, a, m); }
+                    select-mouse-button(i) => { root.km-select-mouse-button(i); }
+                    select-extra-action(i) => { root.km-select-extra-action(i); }
+                    select-macro(i) => { root.km-select-macro(i); }
+                    select-macro-mode(i) => { root.km-select-macro-mode(i); }
+                    change-macro-repeat(d) => { root.km-change-macro-repeat(d); }
+                    apply-key-clicked => { root.km-apply-clicked(); }
+                    reset-key-clicked => { root.km-reset-key-clicked(); }
+                    reset-all-clicked => { root.km-reset-all-clicked(); }
+                }
+
+                // Sub-aba 2: Editor e Gravador de Macros
+                if (root.kb-subtab == 2) : MacroControls {
+                    macro-names: root.macro-names;
+                    selected-macro-idx <=> root.macro-selected-idx;
+                    draft-name <=> root.macro-draft-name;
+                    draft-steps: root.macro-draft-steps;
+                    is-recording <=> root.macro-recording;
+                    use-fixed-delay <=> root.macro-use-fixed-delay;
+                    fixed-delay-text <=> root.macro-fixed-delay-text;
+
+                    select-macro(i) => { root.macro-select(i); }
+                    new-macro-clicked => { root.macro-new-clicked(); }
+                    delete-macro-clicked => { root.macro-delete-clicked(); }
+                    save-macro-clicked(n) => { root.macro-save-clicked(n); }
+                    clear-steps-clicked => { root.macro-clear-steps-clicked(); }
+                    toggle-recording(rec) => { root.macro-toggle-recording(rec); }
+                    record-key-event(t, d, c, s, a, m) => { root.macro-record-key-event(t, d, c, s, a, m); }
+                    record-mouse-event(b, d) => { root.macro-record-mouse-event(b, d); }
+                    add-mouse-click(b) => { root.macro-add-mouse-click(b); }
+                    add-mouse-move(dx, dy) => { root.macro-add-mouse-move(dx, dy); }
+                    adjust-step-delay(i, delta) => { root.macro-adjust-step-delay(i, delta); }
+                    remove-step(i) => { root.macro-remove-step(i); }
+                }
+
+                // Sub-aba 3: Sistema & Sincronização
+                if (root.kb-subtab == 3) : SystemControls {
+                    win-lock: root.sys-win-lock;
+                    wasd-swap: root.sys-wasd-swap;
+                    polling-rate-idx: root.sys-polling-rate-idx;
+
+                    toggle-win-lock(v) => { root.sys-toggle-win-lock(v); }
+                    toggle-wasd-swap(v) => { root.sys-toggle-wasd-swap(v); }
+                    select-polling-rate(idx) => { root.sys-select-polling-rate(idx); }
+                    sync-from-device-clicked => { root.sys-sync-from-device(); }
+                    reset-keymap-factory-clicked => { root.sys-reset-keymap-factory(); }
                 }
             }
 

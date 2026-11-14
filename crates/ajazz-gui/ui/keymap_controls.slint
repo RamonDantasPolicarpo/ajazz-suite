@@ -1,0 +1,504 @@
+import { Theme } from "theme.slint";
+
+component ActionPill inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <length> pill-width: 82px;
+    in property <length> pill-height: 24px;
+    callback clicked();
+
+    width: root.pill-width;
+    height: root.pill-height;
+    border-radius: Theme.radius-sm;
+    background: !root.enabled ? Theme.background : (root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised));
+    border-color: root.active && root.enabled ? Theme.border-light : Theme.border;
+    border-width: 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.active ? Theme.text-primary : Theme.text-secondary;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component KeymapControls inherits Rectangle {
+    in property <int> selected-key-idx: 0;
+    in property <string> selected-key-name: "ESC";
+    in property <string> current-binding-label: "Padrão: Esc";
+    in property <bool> is-selected-remapped: false;
+
+    // 0 = Tecla/Atalho, 1 = Mouse, 2 = Mídia/Sistema, 3 = Macro, 4 = Desativar
+    in-out property <int> draft-category: 0;
+    in-out property <int> draft-mod-mask: 0;
+    in-out property <int> draft-key-idx: 0;
+    in-out property <int> draft-mouse-idx: 0;
+    in-out property <int> draft-extra-idx: 0;
+    in-out property <int> draft-macro-idx: 0;
+    in-out property <int> draft-macro-mode: 0;
+    in-out property <int> draft-macro-repeat: 2;
+    in-out property <bool> capturing-key: false;
+
+    in property <[string]> key-catalog-labels: [];
+    in property <[string]> extra-action-labels: [];
+    in property <[string]> macro-names: [];
+
+    callback category-selected(int);
+    callback toggle-modifier(int);
+    callback select-catalog-key(int);
+    callback capture-key-pressed(string, bool, bool, bool, bool);
+    callback select-mouse-button(int);
+    callback select-extra-action(int);
+    callback select-macro(int);
+    callback select-macro-mode(int);
+    callback change-macro-repeat(int);
+    callback apply-key-clicked();
+    callback reset-key-clicked();
+    callback reset-all-clicked();
+
+    width: 720px;
+    height: 318px;
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+
+        // Cabeçalho com tecla selecionada e mapeamento atual
+        HorizontalLayout {
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                Rectangle {
+                    height: 24px;
+                    width: 68px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.surface-active;
+                    border-color: Theme.border-light;
+                    border-width: 1px;
+
+                    Text {
+                        text: root.selected-key-name;
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
+                Text {
+                    text: root.current-binding-label;
+                    font-family: Theme.mono-font;
+                    font-size: 10px;
+                    font-weight: 600;
+                    color: root.is-selected-remapped ? Theme.status-online : Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Categorias
+            HorizontalLayout {
+                spacing: 4px;
+                ActionPill { text: "Tecla"; pill-width: 64px; active: root.draft-category == 0; clicked => { root.capturing-key = false; root.category-selected(0); } }
+                ActionPill { text: "Mouse"; pill-width: 64px; active: root.draft-category == 1; clicked => { root.capturing-key = false; root.category-selected(1); } }
+                ActionPill { text: "Mídia/Sist"; pill-width: 80px; active: root.draft-category == 2; clicked => { root.capturing-key = false; root.category-selected(2); } }
+                ActionPill { text: "Macro"; pill-width: 64px; active: root.draft-category == 3; clicked => { root.capturing-key = false; root.category-selected(3); } }
+                ActionPill { text: "Desativar"; pill-width: 72px; active: root.draft-category == 4; clicked => { root.capturing-key = false; root.category-selected(4); } }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // Área de conteúdo da categoria selecionada
+        Rectangle {
+            height: 204px;
+            background: Theme.surface-raised;
+            border-radius: Theme.radius-md;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            // 0: Tecla / Atalho
+            if (root.draft-category == 0) : VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Text { text: "MOD:"; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-muted; vertical-alignment: center; }
+                        ActionPill { text: "LCtrl"; pill-width: 48px; pill-height: 22px; active: Math.mod(root.draft-mod-mask, 2) >= 1; clicked => { root.toggle-modifier(1); } }
+                        ActionPill { text: "LShf"; pill-width: 46px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 2), 2) >= 1; clicked => { root.toggle-modifier(2); } }
+                        ActionPill { text: "LAlt"; pill-width: 46px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 4), 2) >= 1; clicked => { root.toggle-modifier(4); } }
+                        ActionPill { text: "LWin"; pill-width: 46px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 8), 2) >= 1; clicked => { root.toggle-modifier(8); } }
+                        ActionPill { text: "RCtrl"; pill-width: 48px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 16), 2) >= 1; clicked => { root.toggle-modifier(16); } }
+                        ActionPill { text: "RShf"; pill-width: 46px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 32), 2) >= 1; clicked => { root.toggle-modifier(32); } }
+                        ActionPill { text: "RAlt"; pill-width: 46px; pill-height: 22px; active: Math.mod(Math.floor(root.draft-mod-mask / 64), 2) >= 1; clicked => { root.toggle-modifier(64); } }
+                    }
+
+                    // Botão Capturar Tecla Física com FocusScope
+                    Rectangle {
+                        width: 170px;
+                        height: 24px;
+                        border-radius: Theme.radius-sm;
+                        background: root.capturing-key ? Theme.status-warning : (cap-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                        border-color: root.capturing-key ? Theme.status-warning : Theme.border-light;
+                        border-width: 1px;
+
+                        Text {
+                            text: root.capturing-key ? "APERTE A TECLA..." : "CAPTURAR TECLA";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.capturing-key ? #18181B : Theme.text-primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        cap-fs := FocusScope {
+                            key-pressed(ev) => {
+                                if (root.capturing-key) {
+                                    root.capture-key-pressed(
+                                        ev.text,
+                                        ev.modifiers.control,
+                                        ev.modifiers.shift,
+                                        ev.modifiers.alt,
+                                        ev.modifiers.meta
+                                    );
+                                    root.capturing-key = false;
+                                    return accept;
+                                }
+                                reject
+                            }
+                        }
+
+                        cap-ta := TouchArea {
+                            clicked => {
+                                root.capturing-key = !root.capturing-key;
+                                if (root.capturing-key) {
+                                    cap-fs.focus();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: space-between;
+
+                    Text {
+                        text: root.draft-key-idx < root.key-catalog-labels.length
+                            ? "Tecla selecionada: " + root.key-catalog-labels[root.draft-key-idx]
+                            : "Selecione uma tecla no catálogo:";
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 4px;
+                        ActionPill {
+                            text: "◀ Ant";
+                            pill-width: 56px;
+                            pill-height: 20px;
+                            clicked => {
+                                if (root.draft-key-idx > 0) {
+                                    root.select-catalog-key(root.draft-key-idx - 1);
+                                }
+                            }
+                        }
+                        ActionPill {
+                            text: "Próx ▶";
+                            pill-width: 58px;
+                            pill-height: 20px;
+                            clicked => {
+                                if (root.draft-key-idx + 1 < root.key-catalog-labels.length) {
+                                    root.select-catalog-key(root.draft-key-idx + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Catálogo rolável em blocos compactos
+                Flickable {
+                    height: 126px;
+                    content-height: cat-col.preferred-height;
+
+                    cat-col := VerticalLayout {
+                        spacing: 4px;
+                        for row_idx in 15 : HorizontalLayout {
+                            spacing: 4px;
+                            for col_idx in 7 : Rectangle {
+                                width: 92px;
+                                height: 22px;
+                                property <int> flat-idx: row_idx * 7 + col_idx;
+                                visible: flat-idx < root.key-catalog-labels.length;
+                                border-radius: Theme.radius-sm;
+                                background: root.draft-key-idx == flat-idx ? Theme.surface-active : (k-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                                border-color: root.draft-key-idx == flat-idx ? Theme.text-primary : Theme.border;
+                                border-width: 1px;
+
+                                Text {
+                                    text: flat-idx < root.key-catalog-labels.length ? root.key-catalog-labels[flat-idx] : "";
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    font-weight: root.draft-key-idx == flat-idx ? 700 : 500;
+                                    color: root.draft-key-idx == flat-idx ? Theme.text-primary : Theme.text-secondary;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                k-ta := TouchArea {
+                                    enabled: flat-idx < root.key-catalog-labels.length;
+                                    clicked => {
+                                        root.capturing-key = false;
+                                        root.select-catalog-key(flat-idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1: Mouse
+            if (root.draft-category == 1) : VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+
+                Text {
+                    text: "ATRIBUIR BOTÃO DO MOUSE À TECLA SELECIONADA";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    ActionPill { text: "Esquerdo"; pill-width: 120px; pill-height: 32px; active: root.draft-mouse-idx == 0; clicked => { root.select-mouse-button(0); } }
+                    ActionPill { text: "Direito"; pill-width: 120px; pill-height: 32px; active: root.draft-mouse-idx == 1; clicked => { root.select-mouse-button(1); } }
+                    ActionPill { text: "Meio"; pill-width: 120px; pill-height: 32px; active: root.draft-mouse-idx == 2; clicked => { root.select-mouse-button(2); } }
+                    ActionPill { text: "Voltar (X1)"; pill-width: 120px; pill-height: 32px; active: root.draft-mouse-idx == 3; clicked => { root.select-mouse-button(3); } }
+                    ActionPill { text: "Avançar (X2)"; pill-width: 120px; pill-height: 32px; active: root.draft-mouse-idx == 4; clicked => { root.select-mouse-button(4); } }
+                }
+            }
+
+            // 2: Mídia / Sistema / Camada / Fn
+            if (root.draft-category == 2) : VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+
+                Text {
+                    text: "CONTROLES DE MÍDIA, SISTEMA ACPI, CAMADAS E FN";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                }
+
+                Flickable {
+                    height: 162px;
+                    content-height: ext-col.preferred-height;
+
+                    ext-col := VerticalLayout {
+                        spacing: 4px;
+                        for r_idx in 7 : HorizontalLayout {
+                            spacing: 4px;
+                            for c_idx in 4 : Rectangle {
+                                width: 164px;
+                                height: 24px;
+                                property <int> e-idx: r_idx * 4 + c_idx;
+                                visible: e-idx < root.extra-action-labels.length;
+                                border-radius: Theme.radius-sm;
+                                background: root.draft-extra-idx == e-idx ? Theme.surface-active : (ex-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                                border-color: root.draft-extra-idx == e-idx ? Theme.text-primary : Theme.border;
+                                border-width: 1px;
+
+                                Text {
+                                    text: e-idx < root.extra-action-labels.length ? root.extra-action-labels[e-idx] : "";
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    font-weight: root.draft-extra-idx == e-idx ? 700 : 500;
+                                    color: root.draft-extra-idx == e-idx ? Theme.text-primary : Theme.text-secondary;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                ex-ta := TouchArea {
+                                    enabled: e-idx < root.extra-action-labels.length;
+                                    clicked => { root.select-extra-action(e-idx); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3: Macro
+            if (root.draft-category == 3) : VerticalLayout {
+                padding: 12px;
+                spacing: 10px;
+                alignment: start;
+
+                Text {
+                    text: root.macro-names.length == 0
+                        ? "Nenhuma macro criada ainda. Crie uma na sub-aba Macros."
+                        : "VINCULAR MACRO E MODO DE DISPARO (0x70 / 0x71)";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: root.macro-names.length == 0 ? Theme.status-warning : Theme.text-muted;
+                }
+
+                if (root.macro-names.length > 0) : VerticalLayout {
+                    spacing: 8px;
+
+                    Flickable {
+                        height: 64px;
+                        content-height: mac-list.preferred-height;
+
+                        mac-list := VerticalLayout {
+                            spacing: 4px;
+                            for m_idx in 8 : HorizontalLayout {
+                                spacing: 4px;
+                                for mc_idx in 4 : Rectangle {
+                                    width: 162px;
+                                    height: 24px;
+                                    property <int> idx: m_idx * 4 + mc_idx;
+                                    visible: idx < root.macro-names.length;
+                                    border-radius: Theme.radius-sm;
+                                    background: root.draft-macro-idx == idx ? Theme.surface-active : Theme.surface;
+                                    border-color: root.draft-macro-idx == idx ? Theme.text-primary : Theme.border;
+                                    border-width: 1px;
+
+                                    Text {
+                                        text: idx < root.macro-names.length ? root.macro-names[idx] : "";
+                                        font-family: Theme.mono-font;
+                                        font-size: 9px;
+                                        font-weight: root.draft-macro-idx == idx ? 700 : 500;
+                                        color: Theme.text-primary;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+
+                                    TouchArea {
+                                        enabled: idx < root.macro-names.length;
+                                        clicked => { root.select-macro(idx); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "MODO DE DISPARO:";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: Theme.text-muted;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 4px;
+                        ActionPill { text: "1x Ciclo"; pill-width: 82px; active: root.draft-macro-mode == 0; clicked => { root.select-macro-mode(0); } }
+                        ActionPill { text: "Parar Soltar"; pill-width: 96px; active: root.draft-macro-mode == 1; clicked => { root.select-macro-mode(1); } }
+                        ActionPill { text: "Toggle L/D"; pill-width: 88px; active: root.draft-macro-mode == 2; clicked => { root.select-macro-mode(2); } }
+                        ActionPill { text: "Parar Imed."; pill-width: 88px; active: root.draft-macro-mode == 3; clicked => { root.select-macro-mode(3); } }
+                        ActionPill { text: "Repetir N×"; pill-width: 86px; active: root.draft-macro-mode == 4; clicked => { root.select-macro-mode(4); } }
+                    }
+
+                    if (root.draft-macro-mode == 4) : HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text { text: "REPETIÇÕES:"; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; }
+                        ActionPill { text: "-"; pill-width: 28px; pill-height: 22px; clicked => { root.change-macro-repeat(-1); } }
+                        Text { text: root.draft-macro-repeat + "x"; font-family: Theme.mono-font; font-size: 10px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
+                        ActionPill { text: "+"; pill-width: 28px; pill-height: 22px; clicked => { root.change-macro-repeat(1); } }
+                    }
+                }
+            }
+
+            // 4: Desativar
+            if (root.draft-category == 4) : VerticalLayout {
+                padding: 20px;
+                spacing: 8px;
+                alignment: center;
+
+                Text {
+                    text: "TECLA DESATIVADA (0x20 00 00)";
+                    font-family: Theme.mono-font;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Ao aplicar, esta tecla física não enviará nenhum sinal ao sistema operacional.";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    color: Theme.text-secondary;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // Barra inferior de confirmação (Flash)
+        HorizontalLayout {
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 6px;
+                ActionPill { text: "RESTAURAR TECLA"; pill-width: 124px; pill-height: 26px; clicked => { root.reset-key-clicked(); } }
+                ActionPill { text: "RESTAURAR TODAS"; pill-width: 124px; pill-height: 26px; clicked => { root.reset-all-clicked(); } }
+            }
+
+            Rectangle {
+                width: 160px;
+                height: 26px;
+                border-radius: Theme.radius-sm;
+                background: ap-ta.has-hover ? Theme.surface-hover : Theme.surface-active;
+                border-color: Theme.border-light;
+                border-width: 1px;
+
+                Text {
+                    text: "APLICAR NA TECLA";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                ap-ta := TouchArea {
+                    clicked => { root.apply-key-clicked(); }
+                }
+            }
+        }
+    }
+}

@@ -72,4 +72,21 @@ mod tests {
         assert_eq!(decoded.custom_banks[1].len(), ajazz_protocol::TOTAL_PHYSICAL_LEDS);
         assert_eq!(decoded.custom_banks[1][0], RgbColor::new(0x12, 0x34, 0x56));
     }
+
+    #[test]
+    fn test_legacy_config_json_deserializes_with_defaults() {
+        let legacy_json = serde_json::json!({
+            "lighting": ajazz_protocol::LightingConfig::default(),
+            "custom_banks": [
+                vec![RgbColor::default(); ajazz_protocol::TOTAL_PHYSICAL_LEDS],
+                vec![RgbColor::default(); ajazz_protocol::TOTAL_PHYSICAL_LEDS],
+                vec![RgbColor::default(); ajazz_protocol::TOTAL_PHYSICAL_LEDS]
+            ]
+        })
+        .to_string();
+        let decoded: UserProfile = serde_json::from_str(&legacy_json).unwrap();
+        assert_eq!(decoded.system, ajazz_protocol::SystemStages::default());
+        assert!(decoded.keymap.is_empty());
+        assert!(decoded.macros.is_empty());
+    }
 }

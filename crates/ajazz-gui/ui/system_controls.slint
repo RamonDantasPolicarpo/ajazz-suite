@@ -1,0 +1,237 @@
+import { Theme } from "theme.slint";
+
+component SysPill inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> warning: false;
+    in property <length> pill-width: 96px;
+    callback clicked();
+
+    width: root.pill-width;
+    height: 26px;
+    border-radius: Theme.radius-sm;
+    background: root.warning && root.active ? #3B3219 : (root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface));
+    border-color: root.warning && root.active ? Theme.status-warning : (root.active ? Theme.text-primary : Theme.border);
+    border-width: 1px;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: root.active ? 700 : 500;
+        color: root.warning && root.active ? Theme.status-warning : (root.active ? Theme.text-primary : Theme.text-secondary);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SystemControls inherits Rectangle {
+    in-out property <bool> win-lock: false;
+    in-out property <bool> wasd-swap: false;
+    in-out property <int> polling-rate-idx: 0; // 0=1000, 1=500, 2=250, 3=125
+
+    callback toggle-win-lock(bool);
+    callback toggle-wasd-swap(bool);
+    callback select-polling-rate(int);
+    callback sync-from-device-clicked();
+    callback reset-keymap-factory-clicked();
+
+    width: 720px;
+    height: 318px;
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: "PARÂMETROS DE SISTEMA DO TECLADO (BLOCO 0x05 / 0x06)";
+            font-family: Theme.mono-font;
+            font-size: 9px;
+            font-weight: 700;
+            color: Theme.text-muted;
+        }
+
+        // WinLock + WASD Swap
+        HorizontalLayout {
+            spacing: 12px;
+
+            Rectangle {
+                width: 338px;
+                height: 76px;
+                background: Theme.surface-raised;
+                border-radius: Theme.radius-md;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "TRAVA TECLA WINDOWS (WinFlag)"; font-family: Theme.mono-font; font-size: 10px; font-weight: 700; color: Theme.text-primary; }
+                        Text {
+                            text: root.win-lock ? "TRAVADA" : "LIVRE";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.win-lock ? Theme.status-online : Theme.text-muted;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SysPill { text: "Livre (Normal)"; pill-width: 150px; active: !root.win-lock; clicked => { root.toggle-win-lock(false); } }
+                        SysPill { text: "Travada (Jogo)"; pill-width: 150px; active: root.win-lock; clicked => { root.toggle-win-lock(true); } }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 338px;
+                height: 76px;
+                background: Theme.surface-raised;
+                border-radius: Theme.radius-md;
+                border-color: root.wasd-swap ? Theme.status-warning : Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "TROCAR WASD ↔ SETAS (WFlag)"; font-family: Theme.mono-font; font-size: 10px; font-weight: 700; color: Theme.text-primary; }
+                        Text {
+                            text: root.wasd-swap ? "ATIVO!" : "DESATIVADO";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.wasd-swap ? Theme.status-warning : Theme.text-muted;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SysPill { text: "Normal (WASD)"; pill-width: 150px; active: !root.wasd-swap; clicked => { root.toggle-wasd-swap(false); } }
+                        SysPill { text: "Invertido (Setas)"; pill-width: 150px; active: root.wasd-swap; warning: true; clicked => { root.toggle-wasd-swap(true); } }
+                    }
+                }
+            }
+        }
+
+        // Alerta visual quando WASD <-> Setas estiver ligado
+        if (root.wasd-swap) : Rectangle {
+            height: 28px;
+            background: #3B3219;
+            border-radius: Theme.radius-sm;
+            border-color: Theme.status-warning;
+            border-width: 1px;
+
+            Text {
+                text: "⚠ ATENÇÃO: W/A/S/D e as teclas de Seta estão trocadas no hardware (WFlag=1).";
+                font-family: Theme.mono-font;
+                font-size: 9px;
+                font-weight: 700;
+                color: Theme.status-warning;
+                x: 12px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        // Polling Rate USB
+        Rectangle {
+            height: 68px;
+            background: Theme.surface-raised;
+            border-radius: Theme.radius-md;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { text: "TAXA DE POLLING USB (POLLING RATE)"; font-family: Theme.mono-font; font-size: 10px; font-weight: 700; color: Theme.text-primary; }
+                    Text { text: "Aplicado imediatamente na flash do controlador"; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-muted; }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    SysPill { text: "1000 Hz (1 ms)"; pill-width: 158px; active: root.polling-rate-idx == 0; clicked => { root.select-polling-rate(0); } }
+                    SysPill { text: "500 Hz (2 ms)"; pill-width: 158px; active: root.polling-rate-idx == 1; clicked => { root.select-polling-rate(1); } }
+                    SysPill { text: "250 Hz (4 ms)"; pill-width: 158px; active: root.polling-rate-idx == 2; clicked => { root.select-polling-rate(2); } }
+                    SysPill { text: "125 Hz (8 ms)"; pill-width: 158px; active: root.polling-rate-idx == 3; clicked => { root.select-polling-rate(3); } }
+                }
+            }
+        }
+
+        // Sincronizar & Fábrica
+        HorizontalLayout {
+            alignment: space-between;
+
+            Rectangle {
+                width: 338px;
+                height: 36px;
+                border-radius: Theme.radius-sm;
+                background: sync-ta.has-hover ? Theme.surface-hover : Theme.surface-active;
+                border-color: Theme.border-light;
+                border-width: 1px;
+
+                Text {
+                    text: "SINCRONIZAR DO TECLADO (OPCODE 0x05)";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                sync-ta := TouchArea {
+                    clicked => { root.sync-from-device-clicked(); }
+                }
+            }
+
+            Rectangle {
+                width: 338px;
+                height: 36px;
+                border-radius: Theme.radius-sm;
+                background: rst-ta.has-hover ? Theme.surface-hover : Theme.surface-raised;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                Text {
+                    text: "RESTAURAR KEYMAP DE FÁBRICA (0x09)";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-secondary;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                rst-ta := TouchArea {
+                    clicked => { root.reset-keymap-factory-clicked(); }
+                }
+            }
+        }
+
+        Text {
+            text: "Nota: O firmware do AK820 não expõe debounce por hardware no comando 0x06.";
+            font-family: Theme.mono-font;
+            font-size: 8px;
+            color: Theme.text-muted;
+        }
+    }
+}

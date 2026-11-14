@@ -1,0 +1,395 @@
+import { Theme } from "theme.slint";
+
+export struct MacroStepItem {
+    index-label: string,
+    action-label: string,
+    delay-ms: int,
+}
+
+component MiniBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> danger: false;
+    in property <bool> warning: false;
+    in property <length> btn-width: 72px;
+    in property <length> btn-height: 22px;
+    callback clicked();
+
+    width: root.btn-width;
+    height: root.btn-height;
+    border-radius: Theme.radius-sm;
+    background: root.warning ? Theme.status-warning : (root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised));
+    border-color: root.danger ? Theme.status-error : (root.warning ? Theme.status-warning : (root.active ? Theme.border-light : Theme.border));
+    border-width: 1px;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: (root.active || root.warning) ? 700 : 500;
+        color: root.warning ? #18181B : (root.danger ? Theme.status-error : (root.active ? Theme.text-primary : Theme.text-secondary));
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component MacroControls inherits Rectangle {
+    in property <[string]> macro-names: [];
+    in-out property <int> selected-macro-idx: -1;
+    in-out property <string> draft-name: "";
+    in-out property <[MacroStepItem]> draft-steps: [];
+    in-out property <bool> is-recording: false;
+    in-out property <bool> use-fixed-delay: false;
+    in-out property <string> fixed-delay-text: "25";
+    in-out property <string> mouse-dx-text: "20";
+    in-out property <string> mouse-dy-text: "0";
+
+    callback select-macro(int);
+    callback new-macro-clicked();
+    callback delete-macro-clicked();
+    callback save-macro-clicked(string);
+    callback clear-steps-clicked();
+    callback toggle-recording(bool);
+    callback record-key-event(string, bool, bool, bool, bool, bool);
+    callback record-mouse-event(int, bool);
+    callback add-mouse-click(int);
+    callback add-mouse-move(string, string);
+    callback adjust-step-delay(int, int);
+    callback remove-step(int);
+
+    width: 720px;
+    height: 318px;
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        // Coluna Esquerda: Lista de Macros
+        VerticalLayout {
+            width: 186px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "MACROS";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    MiniBtn { text: "+ NOVA"; btn-width: 54px; btn-height: 20px; active: true; clicked => { root.new-macro-clicked(); } }
+                    MiniBtn { text: "EXCLUIR"; btn-width: 56px; btn-height: 20px; danger: true; clicked => { root.delete-macro-clicked(); } }
+                }
+            }
+
+            Rectangle {
+                height: 262px;
+                background: Theme.surface-raised;
+                border-radius: Theme.radius-md;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                Flickable {
+                    height: 254px;
+                    width: 182px;
+                    x: 2px;
+                    y: 4px;
+                    content-height: list-col.preferred-height;
+
+                    list-col := VerticalLayout {
+                        padding: 4px;
+                        spacing: 4px;
+
+                        if (root.macro-names.length == 0) : Text {
+                            text: "Clique em + NOVA para criar";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                            horizontal-alignment: center;
+                        }
+
+                        for name[idx] in root.macro-names : Rectangle {
+                            height: 26px;
+                            border-radius: Theme.radius-sm;
+                            background: root.selected-macro-idx == idx ? Theme.surface-active : (m-ta.has-hover ? Theme.surface-hover : Theme.surface);
+                            border-color: root.selected-macro-idx == idx ? Theme.text-primary : Theme.border;
+                            border-width: 1px;
+
+                            Text {
+                                text: (idx + 1) + ". " + name;
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: root.selected-macro-idx == idx ? 700 : 500;
+                                color: Theme.text-primary;
+                                x: 8px;
+                                y: (parent.height - self.height) / 2;
+                            }
+
+                            m-ta := TouchArea {
+                                clicked => { root.select-macro(idx); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Coluna Direita: Editor & Gravador ao Vivo
+        VerticalLayout {
+            spacing: 8px;
+
+            // Linha 1: Nome da Macro + Gravar / Salvar
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "NOME:"; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-muted; vertical-alignment: center; }
+                    Rectangle {
+                        width: 168px;
+                        height: 24px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.background;
+                        border-color: Theme.border;
+                        border-width: 1px;
+
+                        TextInput {
+                            width: 156px;
+                            x: 6px;
+                            y: 5px;
+                            text <=> root.draft-name;
+                            font-family: Theme.mono-font;
+                            font-size: 10px;
+                            color: Theme.text-primary;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    // Botão Gravar / Parar Gravação: TouchArea dedicado nunca propaga clique de parada
+                    Rectangle {
+                        width: 128px;
+                        height: 24px;
+                        border-radius: Theme.radius-sm;
+                        background: root.is-recording ? Theme.status-warning : (rec-ta.has-hover ? Theme.surface-hover : Theme.surface-active);
+                        border-color: root.is-recording ? Theme.status-warning : Theme.border-light;
+                        border-width: 1px;
+
+                        Text {
+                            text: root.is-recording ? "■ PARAR GRAVAÇÃO" : "● GRAVAR AO VIVO";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.is-recording ? #18181B : Theme.text-primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        rec-ta := TouchArea {
+                            clicked => {
+                                root.is-recording = !root.is-recording;
+                                root.toggle-recording(root.is-recording);
+                                if (root.is-recording) {
+                                    rec-fs.focus();
+                                }
+                            }
+                        }
+                    }
+
+                    MiniBtn {
+                        text: "SALVAR MACRO";
+                        btn-width: 104px;
+                        btn-height: 24px;
+                        active: true;
+                        clicked => {
+                            if (root.is-recording) {
+                                root.is-recording = false;
+                                root.toggle-recording(false);
+                            }
+                            root.save-macro-clicked(root.draft-name);
+                        }
+                    }
+                }
+            }
+
+            // Linha 2: Modo de Delay + Inserção Rápida Manual + Área de Captura ao Vivo
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    MiniBtn { text: "Delay Real"; btn-width: 74px; active: !root.use-fixed-delay; clicked => { root.use-fixed-delay = false; } }
+                    MiniBtn { text: "Fixo(ms)"; btn-width: 62px; active: root.use-fixed-delay; clicked => { root.use-fixed-delay = true; } }
+                    Rectangle {
+                        width: 40px;
+                        height: 22px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.background;
+                        border-color: Theme.border;
+                        border-width: 1px;
+                        opacity: root.use-fixed-delay ? 1.0 : 0.45;
+                        TextInput {
+                            width: 32px;
+                            x: 4px;
+                            y: 4px;
+                            text <=> root.fixed-delay-text;
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-primary;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    MiniBtn { text: "+Click Esq"; btn-width: 68px; clicked => { root.add-mouse-click(0); } }
+                    MiniBtn { text: "+Click Dir"; btn-width: 68px; clicked => { root.add-mouse-click(1); } }
+                    Text { text: "dX"; font-family: Theme.mono-font; font-size: 8px; color: Theme.text-muted; vertical-alignment: center; }
+                    Rectangle {
+                        width: 30px; height: 22px; border-radius: Theme.radius-sm; background: Theme.background; border-color: Theme.border; border-width: 1px;
+                        TextInput { width: 24px; x: 3px; y: 4px; text <=> root.mouse-dx-text; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-primary; }
+                    }
+                    Text { text: "dY"; font-family: Theme.mono-font; font-size: 8px; color: Theme.text-muted; vertical-alignment: center; }
+                    Rectangle {
+                        width: 30px; height: 22px; border-radius: Theme.radius-sm; background: Theme.background; border-color: Theme.border; border-width: 1px;
+                        TextInput { width: 24px; x: 3px; y: 4px; text <=> root.mouse-dy-text; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-primary; }
+                    }
+                    MiniBtn { text: "+Move"; btn-width: 46px; clicked => { root.add-mouse-move(root.mouse-dx-text, root.mouse-dy-text); } }
+                }
+            }
+
+            // Área dedicada para captura ao vivo de teclas + cliques sem capturar o botão Parar
+            Rectangle {
+                height: root.is-recording ? 42px : 24px;
+                border-radius: Theme.radius-sm;
+                background: root.is-recording ? #2F2B1E : Theme.surface-raised;
+                border-color: root.is-recording ? Theme.status-warning : Theme.border;
+                border-width: 1px;
+
+                Text {
+                    text: root.is-recording
+                        ? "GRAVANDO: Digite teclas ou clique AQUI para capturar mouse. Clique em 'PARAR GRAVAÇÃO' ao concluir."
+                        : "Modo edição manual (clique em 'GRAVAR AO VIVO' para capturar teclado e mouse).";
+                    font-family: Theme.mono-font;
+                    font-size: 9px;
+                    font-weight: root.is-recording ? 700 : 400;
+                    color: root.is-recording ? Theme.status-warning : Theme.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                rec-fs := FocusScope {
+                    key-pressed(ev) => {
+                        if (root.is-recording) {
+                            root.record-key-event(ev.text, true, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta);
+                            return accept;
+                        }
+                        reject
+                    }
+                    key-released(ev) => {
+                        if (root.is-recording) {
+                            root.record-key-event(ev.text, false, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta);
+                            return accept;
+                        }
+                        reject
+                    }
+                }
+
+                TouchArea {
+                    pointer-event(ev) => {
+                        if (root.is-recording) {
+                            rec-fs.focus();
+                            if (ev.kind == PointerEventKind.down || ev.kind == PointerEventKind.up) {
+                                root.record-mouse-event(
+                                    ev.button == PointerEventButton.right ? 1 : (ev.button == PointerEventButton.middle ? 2 : 0),
+                                    ev.kind == PointerEventKind.down
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tabela rolável de Passos da Macro
+            Rectangle {
+                height: root.is-recording ? 156px : 174px;
+                background: Theme.surface-raised;
+                border-radius: Theme.radius-md;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                Flickable {
+                    height: parent.height - 8px;
+                    width: 486px;
+                    x: 4px;
+                    y: 4px;
+                    content-height: steps-col.preferred-height;
+
+                    steps-col := VerticalLayout {
+                        spacing: 3px;
+                        padding: 2px;
+
+                        if (root.draft-steps.length == 0) : Text {
+                            text: "Nenhum passo na macro.";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            color: Theme.text-muted;
+                            horizontal-alignment: center;
+                        }
+
+                        for step[idx] in root.draft-steps : Rectangle {
+                            height: 24px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.surface;
+                            border-color: Theme.border;
+                            border-width: 1px;
+
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 6px;
+                                alignment: space-between;
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: step.index-label; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-muted; vertical-alignment: center; width: 26px; }
+                                    Text { text: step.action-label; font-family: Theme.mono-font; font-size: 9px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; width: 210px; }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    alignment: end;
+                                    Text { text: step.delay-ms + " ms"; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; width: 56px; horizontal-alignment: right; }
+                                    MiniBtn { text: "-10"; btn-width: 30px; btn-height: 18px; clicked => { root.adjust-step-delay(idx, -10); } }
+                                    MiniBtn { text: "+10"; btn-width: 30px; btn-height: 18px; clicked => { root.adjust-step-delay(idx, 10); } }
+                                    MiniBtn { text: "✕"; btn-width: 24px; btn-height: 18px; danger: true; clicked => { root.remove-step(idx); } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Rodapé: Limpar passos
+            HorizontalLayout {
+                alignment: end;
+                MiniBtn { text: "LIMPAR PASSOS"; btn-width: 108px; btn-height: 22px; danger: true; clicked => { root.clear-steps-clicked(); } }
+            }
+        }
+    }
+}
