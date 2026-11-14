@@ -5,10 +5,10 @@ import { LightingControls } from "lighting_controls.slint";
 import { KeymapControls } from "keymap_controls.slint";
 import { MacroControls, MacroStepItem } from "macro_controls.slint";
 import { SystemControls } from "system_controls.slint";
-import { MouseView } from "mouse_view.slint";
+import { MouseView, MouseChatterRowItem } from "mouse_view.slint";
 import { SettingsView } from "settings_view.slint";
 
-export { MacroStepItem }
+export { MacroStepItem, MouseChatterRowItem }
 
 component SubTabPill inherits Rectangle {
     in property <string> label;
@@ -283,9 +283,17 @@ export component MainWindow inherits Window {
     in-out property <int> ms-btn-key-idx: 0;
     in-out property <int> ms-btn-media-idx: 0;
     in-out property <int> ms-btn-system-idx: 0;
+    in-out property <int> ms-btn-macro-idx: 0;
+    in-out property <int> ms-btn-macro-mode: 0;
+    in-out property <int> ms-btn-macro-repeat: 1;
     in-out property <bool> ms-btn-capturing-key: false;
     in-out property <bool> ms-btn-left-warning: false;
     in property <[string]> ms-media-labels: [];
+    in-out property <bool> ms-chatter-enabled: true;
+    in-out property <int> ms-chatter-threshold-ms: 45;
+    in-out property <int> ms-chatter-total: 0;
+    in-out property <string> ms-chatter-alert-text: "Nenhum rebote anormal detectado nos switches físicos.";
+    in-out property <[MouseChatterRowItem]> ms-chatter-rows: [];
 
     callback ms-dpi-count-changed(int);
     callback ms-dpi-stage-selected(int);
@@ -312,8 +320,14 @@ export component MainWindow inherits Window {
     callback ms-btn-capture-key(string, bool, bool, bool, bool);
     callback ms-btn-media-selected(int);
     callback ms-btn-system-selected(int);
+    callback ms-btn-macro-selected(int);
+    callback ms-btn-macro-mode-selected(int);
+    callback ms-btn-macro-repeat-step(int);
     callback ms-apply-button-clicked();
     callback ms-reset-buttons-clicked();
+    callback ms-chatter-toggle-clicked();
+    callback ms-chatter-threshold-step(int);
+    callback ms-chatter-reset-clicked();
 
     HorizontalLayout {
         Sidebar {
@@ -610,10 +624,19 @@ export component MainWindow inherits Window {
                 btn-key-idx <=> root.ms-btn-key-idx;
                 btn-media-idx <=> root.ms-btn-media-idx;
                 btn-system-idx <=> root.ms-btn-system-idx;
+                btn-macro-idx <=> root.ms-btn-macro-idx;
+                btn-macro-mode <=> root.ms-btn-macro-mode;
+                btn-macro-repeat <=> root.ms-btn-macro-repeat;
                 btn-capturing-key <=> root.ms-btn-capturing-key;
                 btn-left-warning: root.ms-btn-left-warning;
                 key-catalog-labels: root.km-key-catalog-labels;
                 media-labels: root.ms-media-labels;
+                macro-names: root.macro-names;
+                chatter-enabled: root.ms-chatter-enabled;
+                chatter-threshold-ms: root.ms-chatter-threshold-ms;
+                chatter-total: root.ms-chatter-total;
+                chatter-alert-text: root.ms-chatter-alert-text;
+                chatter-rows: root.ms-chatter-rows;
 
                 dpi-count-changed(n) => { root.ms-dpi-count-changed(n); }
                 dpi-stage-selected(i) => { root.ms-dpi-stage-selected(i); }
@@ -641,8 +664,18 @@ export component MainWindow inherits Window {
                 btn-capture-key(t, c, s, a, m) => { root.ms-btn-capture-key(t, c, s, a, m); }
                 btn-media-selected(i) => { root.ms-btn-media-selected(i); }
                 btn-system-selected(i) => { root.ms-btn-system-selected(i); }
+                btn-macro-selected(i) => { root.ms-btn-macro-selected(i); }
+                btn-macro-mode-selected(m) => { root.ms-btn-macro-mode-selected(m); }
+                btn-macro-repeat-step(d) => { root.ms-btn-macro-repeat-step(d); }
+                open-macro-editor-clicked => {
+                    root.active-tab = 0;
+                    root.kb-subtab = 2;
+                }
                 apply-button-clicked => { root.ms-apply-button-clicked(); }
                 reset-buttons-clicked => { root.ms-reset-buttons-clicked(); }
+                chatter-toggle-clicked => { root.ms-chatter-toggle-clicked(); }
+                chatter-threshold-step(d) => { root.ms-chatter-threshold-step(d); }
+                chatter-reset-clicked => { root.ms-chatter-reset-clicked(); }
             }
 
             // Aba 2: Configurações & Daemon

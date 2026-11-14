@@ -6,7 +6,7 @@ mod ipc_client;
 mod keymap_ui;
 mod mouse_ui;
 
-use ajazz_protocol::mouse::{MouseConfig, MouseStatus};
+use ajazz_protocol::mouse::{MouseConfig, MouseStatus, SwitchChatteringSnapshot};
 use ajazz_protocol::{
     AudioStyle, DirectionKind, GifCrop, KeyAssignment, LightingConfig, LightingDirection,
     LightingMode, MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor,
@@ -46,12 +46,18 @@ pub struct GuiState {
     pub mouse_force_resync: bool,
     pub mouse_connected: bool,
     pub mouse_status: Option<MouseStatus>,
+    pub chattering_snap: SwitchChatteringSnapshot,
 }
 
 impl GuiState {
     fn new(profile: UserProfile) -> Self {
         let (hue, sat, val) = rgb_to_hsv(profile.lighting.color);
         let draft_mouse_config = profile.mouse.config.clone();
+        let chattering_snap = SwitchChatteringSnapshot {
+            enabled: profile.mouse.chattering.enabled,
+            threshold_ms: profile.mouse.chattering.threshold_ms,
+            ..Default::default()
+        };
         Self {
             profile,
             synced_initial: false,
@@ -76,6 +82,7 @@ impl GuiState {
             mouse_force_resync: false,
             mouse_connected: false,
             mouse_status: None,
+            chattering_snap,
         }
     }
 }
@@ -327,8 +334,9 @@ fn sync_ui_from_state(ui: &MainWindow, st: &GuiState) {
 
     let ms_dirty = st.draft_mouse_config != st.profile.mouse.config;
     mouse_ui::sync_telemetry_to_ui(ui, st.mouse_connected, st.mouse_status.as_ref());
-    mouse_ui::sync_buttons_list_to_ui(ui, &st.profile.mouse.buttons);
+    mouse_ui::sync_buttons_list_to_ui(ui, &st.profile.mouse.buttons, &st.profile.macros);
     mouse_ui::sync_config_to_ui(ui, &st.draft_mouse_config, ms_dirty);
+    mouse_ui::sync_chattering_to_ui(ui, &st.chattering_snap);
 }
 
 fn update_color_and_hsv(st: &mut GuiState, color: RgbColor, update_hsv: bool) {
@@ -469,24 +477,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         });
                         false
                     }
-                    Ok(IpcResponse::MouseStatus { mouse_connected, mouse_status, profile }) => {
-                        let plan = {
+                    Ok(IpcResponse::MouseStatus {
+                        mouse_connected,
+                        mouse_status,
+                        profile,
+                        chattering,
+                    }) => {
+                        let (plan, macros) = {
                             let mut st = state_ref.lock().unwrap();
-                            mouse_ui::merge_mouse_status(
+                            st.chattering_snap = chattering.clone();
+                            let plan = mouse_ui::merge_mouse_status(
                                 &mut st,
                                 mouse_connected,
                                 mouse_status.clone(),
                                 profile,
-                            )
+                            );
+                            (plan, st.profile.macros.clone())
                         };
                         let ui_clone = ui_w.clone();
                         let _ = ui_clone.upgrade_in_event_loop(move |ui| {
                             ui.set_daemon_online(true);
                             mouse_ui::sync_telemetry_to_ui(&ui, mouse_connected, mouse_status.as_ref());
+                            mouse_ui::sync_chattering_to_ui(&ui, &chattering);
                             if plan.sync_buttons {
-                                mouse_ui::sync_buttons_list_to_ui(&ui, &plan.buttons);
+                                mouse_ui::sync_buttons_list_to_ui(&ui, &plan.buttons, &macros);
                             } else {
-                                mouse_ui::sync_button_labels_only(&ui, &plan.buttons);
+                                mouse_ui::sync_button_labels_only(&ui, &plan.buttons, &macros);
                             }
                             if plan.sync_config {
                                 mouse_ui::sync_config_to_ui(&ui, &plan.draft_cfg, plan.dirty);
@@ -552,6 +568,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 | IpcRequest::ResetMouseButtons
                                 | IpcRequest::SyncMouseFromDevice
                                 | IpcRequest::StartMousePairing
+                                | IpcRequest::UploadMouseMacros
+                                | IpcRequest::SetChatteringConfig { .. }
+                                | IpcRequest::ResetChatteringStats
                                 | IpcRequest::GetMouseStatus
                         );
                         let was_sync = matches!(req, IpcRequest::SyncFromDevice);

@@ -1,5 +1,14 @@
 import { Theme } from "theme.slint";
 
+export struct MouseChatterRowItem {
+    button-name: string,
+    total-clicks: int,
+    chatter-count: int,
+    last-ms: string,
+    min-ms: string,
+    has-chatter: bool,
+}
+
 component MousePill inherits Rectangle {
     in property <string> text;
     in property <bool> active: false;
@@ -117,8 +126,15 @@ export component MouseView inherits Rectangle {
     in property <string> ms-feedback-text: "";
     in property <bool> ms-feedback-is-error: false;
 
-    in-out property <int> subtab: 0; // 0=Performance & Sensor, 1=Botões, 2=Energia & Conexão
+    in-out property <int> subtab: 0; // 0=Performance, 1=Botões, 2=Energia, 3=Diagnóstico
     in property <bool> dirty: false;
+
+    // Switch Chattering (Diagnóstico ao vivo)
+    in property <bool> chatter-enabled: true;
+    in property <int> chatter-threshold-ms: 45;
+    in property <int> chatter-total: 0;
+    in property <string> chatter-alert-text: "Nenhum rebote anormal detectado nos switches físicos.";
+    in property <[MouseChatterRowItem]> chatter-rows: [];
 
     // Performance & Sensor
     in property <int> dpi-count: 4;
@@ -152,10 +168,14 @@ export component MouseView inherits Rectangle {
     in-out property <int> btn-key-idx: 0;
     in-out property <int> btn-media-idx: 0;
     in-out property <int> btn-system-idx: 0;
+    in-out property <int> btn-macro-idx: 0;
+    in-out property <int> btn-macro-mode: 0; // 0=N vezes, 1=Até soltar, 2=Alternar
+    in-out property <int> btn-macro-repeat: 1;
     in-out property <bool> btn-capturing-key: false;
     in property <bool> btn-left-warning: false;
     in property <[string]> key-catalog-labels: [];
     in property <[string]> media-labels: [];
+    in property <[string]> macro-names: [];
 
     // Callbacks Performance & Sensor + Gerais
     callback dpi-count-changed(int);
@@ -185,8 +205,17 @@ export component MouseView inherits Rectangle {
     callback btn-capture-key(string, bool, bool, bool, bool);
     callback btn-media-selected(int);
     callback btn-system-selected(int);
+    callback btn-macro-selected(int);
+    callback btn-macro-mode-selected(int);
+    callback btn-macro-repeat-step(int);
+    callback open-macro-editor-clicked();
     callback apply-button-clicked();
     callback reset-buttons-clicked();
+
+    // Callbacks Switch Chattering
+    callback chatter-toggle-clicked();
+    callback chatter-threshold-step(int);
+    callback chatter-reset-clicked();
 
     background: Theme.background;
 
@@ -299,6 +328,29 @@ export component MouseView inherits Rectangle {
                             vertical-alignment: center;
                         }
                     }
+
+                    if (root.chatter-total > 0) : Rectangle {
+                        width: 112px;
+                        height: 22px;
+                        border-radius: Theme.radius-sm;
+                        background: #3A1C1C;
+                        border-color: Theme.status-error;
+                        border-width: 1px;
+
+                        Text {
+                            text: "CHATTER: " + root.chatter-total;
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.status-error;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        TouchArea {
+                            clicked => { root.subtab = 3; }
+                        }
+                    }
                 }
             }
         }
@@ -309,10 +361,16 @@ export component MouseView inherits Rectangle {
             alignment: space-between;
 
             HorizontalLayout {
-                spacing: 6px;
-                MouseSubTab { label: "PERFORMANCE & SENSOR"; tab-width: 148px; active: root.subtab == 0; clicked => { root.subtab = 0; } }
-                MouseSubTab { label: "BOTÕES (5)"; tab-width: 100px; active: root.subtab == 1; clicked => { root.subtab = 1; } }
-                MouseSubTab { label: "ENERGIA & CONEXÃO"; tab-width: 136px; active: root.subtab == 2; clicked => { root.subtab = 2; } }
+                spacing: 4px;
+                MouseSubTab { label: "PERFORMANCE"; tab-width: 112px; active: root.subtab == 0; clicked => { root.subtab = 0; } }
+                MouseSubTab { label: "BOTÕES (5)"; tab-width: 86px; active: root.subtab == 1; clicked => { root.subtab = 1; } }
+                MouseSubTab { label: "ENERGIA & 2.4G"; tab-width: 110px; active: root.subtab == 2; clicked => { root.subtab = 2; } }
+                MouseSubTab {
+                    label: root.chatter-total > 0 ? "DIAGNÓSTICO (" + root.chatter-total + ")" : "DIAGNÓSTICO";
+                    tab-width: 122px;
+                    active: root.subtab == 3;
+                    clicked => { root.subtab = 3; }
+                }
             }
 
             HorizontalLayout {
@@ -827,11 +885,12 @@ export component MouseView inherits Rectangle {
                     // Categorias de Ação
                     HorizontalLayout {
                         spacing: 4px;
-                        MousePill { text: "Mouse"; pill-width: 82px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
-                        MousePill { text: "Teclado"; pill-width: 82px; active: root.btn-category == 1; clicked => { root.btn-category-selected(1); } }
-                        MousePill { text: "Mídia"; pill-width: 82px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
-                        MousePill { text: "Sistema"; pill-width: 88px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
-                        MousePill { text: "Desabilitar"; pill-width: 82px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
+                        MousePill { text: "Mouse"; pill-width: 72px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
+                        MousePill { text: "Teclado"; pill-width: 72px; active: root.btn-category == 1; clicked => { root.btn-category-selected(1); } }
+                        MousePill { text: "Mídia"; pill-width: 68px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
+                        MousePill { text: "Sistema"; pill-width: 72px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
+                        MousePill { text: "Macro"; pill-width: 68px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
+                        MousePill { text: "Desab."; pill-width: 72px; active: root.btn-category == 5; clicked => { root.btn-category-selected(5); } }
                     }
 
                     // Conteúdo da Categoria
@@ -1090,8 +1149,143 @@ export component MouseView inherits Rectangle {
                             }
                         }
 
-                        // Cat 4: Desabilitar
+                        // Cat 4: Macro Compartilhada (06 31 + 60 <idx> <modo> <qtd>)
                         if (root.btn-category == 4) : VerticalLayout {
+                            padding: 14px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "ESCOLHER MACRO DA BIBLIOTECA (06 31)";
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    color: Theme.text-muted;
+                                    vertical-alignment: center;
+                                }
+                                MousePill {
+                                    text: "Gerenciar Macros ->";
+                                    pill-width: 132px;
+                                    pill-height: 22px;
+                                    clicked => { root.open-macro-editor-clicked(); }
+                                }
+                            }
+
+                            if (root.macro-names.length == 0) : Rectangle {
+                                height: 150px;
+                                background: Theme.background;
+                                border-radius: Theme.radius-sm;
+                                border-color: Theme.border;
+                                border-width: 1px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 6px;
+                                    padding: 12px;
+                                    Text {
+                                        text: "Nenhuma macro cadastrada na biblioteca ainda.";
+                                        font-family: Theme.mono-font;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Clique em 'Gerenciar Macros ->' acima para gravar ou editar uma macro.";
+                                        font-family: Theme.mono-font;
+                                        font-size: 9px;
+                                        color: Theme.text-secondary;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            if (root.macro-names.length > 0) : Flickable {
+                                height: 156px;
+                                content-height: ceil(root.macro-names.length / 2.0) * 34px;
+
+                                for mname[midx] in root.macro-names : MousePill {
+                                    x: mod(midx, 2) * 204px;
+                                    y: floor(midx / 2) * 34px;
+                                    text: "#" + (midx + 1) + " " + mname;
+                                    pill-width: 196px;
+                                    pill-height: 28px;
+                                    active: root.btn-macro-idx == midx;
+                                    enabled: midx < 32;
+                                    clicked => { root.btn-macro-selected(midx); }
+                                }
+                            }
+
+                            Text {
+                                text: "MODO DE DISPARO NO MOUSE";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 6px;
+                                MousePill {
+                                    text: "N vezes";
+                                    pill-width: 120px;
+                                    pill-height: 28px;
+                                    active: root.btn-macro-mode == 0;
+                                    clicked => { root.btn-macro-mode-selected(0); }
+                                }
+                                MousePill {
+                                    text: "Até soltar";
+                                    pill-width: 120px;
+                                    pill-height: 28px;
+                                    active: root.btn-macro-mode == 1;
+                                    clicked => { root.btn-macro-mode-selected(1); }
+                                }
+                                MousePill {
+                                    text: "Alternar (ON/OFF)";
+                                    pill-width: 152px;
+                                    pill-height: 28px;
+                                    active: root.btn-macro-mode == 2;
+                                    clicked => { root.btn-macro-mode-selected(2); }
+                                }
+                            }
+
+                            if (root.btn-macro-mode == 0) : HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Text {
+                                    text: "Repetições:";
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    color: Theme.text-secondary;
+                                    vertical-alignment: center;
+                                }
+                                MousePill { text: "-1"; pill-width: 34px; pill-height: 24px; clicked => { root.btn-macro-repeat-step(-1); } }
+                                Rectangle {
+                                    width: 48px;
+                                    height: 24px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.background;
+                                    border-color: Theme.border;
+                                    border-width: 1px;
+                                    Text {
+                                        text: root.btn-macro-repeat + "x";
+                                        font-family: Theme.mono-font;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                }
+                                MousePill { text: "+1"; pill-width: 34px; pill-height: 24px; clicked => { root.btn-macro-repeat-step(1); } }
+                            }
+                        }
+
+                        // Cat 5: Desabilitar
+                        if (root.btn-category == 5) : VerticalLayout {
                             padding: 20px;
                             spacing: 8px;
                             alignment: center;
@@ -1121,8 +1315,8 @@ export component MouseView inherits Rectangle {
                             text: "APLICAR BOTÃO NO MOUSE";
                             pill-width: 196px;
                             pill-height: 28px;
-                            enabled: root.ms-connected && !root.btn-left-warning;
-                            highlight: root.ms-connected && !root.btn-left-warning;
+                            enabled: root.ms-connected && !root.btn-left-warning && !(root.btn-category == 4 && root.macro-names.length == 0);
+                            highlight: root.ms-connected && !root.btn-left-warning && !(root.btn-category == 4 && root.macro-names.length == 0);
                             clicked => { root.apply-button-clicked(); }
                         }
                     }
@@ -1284,6 +1478,205 @@ export component MouseView inherits Rectangle {
                                 clicked => { root.confirm-pairing = false; }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // SUB-ABA 3: DIAGNÓSTICO DE SWITCH CHATTERING
+        // ============================================================
+        if (root.subtab == 3) : VerticalLayout {
+            spacing: 10px;
+            width: 720px;
+
+            Rectangle {
+                width: 720px;
+                height: 116px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: root.chatter-total > 0 ? Theme.status-error : Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "MONITOR PASSIVO DE SWITCH CHATTERING (RAW INPUT)";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.chatter-enabled ? "0% CPU EM IDLE" : "PAUSADO";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.chatter-enabled ? Theme.status-online : Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: root.chatter-alert-text;
+                        font-family: Theme.mono-font;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: root.chatter-total > 0 ? Theme.status-error : Theme.status-online;
+                    }
+
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            MousePill {
+                                text: root.chatter-enabled ? "MONITOR: ATIVO" : "MONITOR: PAUSADO";
+                                pill-width: 138px;
+                                pill-height: 26px;
+                                active: root.chatter-enabled;
+                                highlight: root.chatter-enabled;
+                                clicked => { root.chatter-toggle-clicked(); }
+                            }
+                            MousePill {
+                                text: "-5 ms";
+                                pill-width: 54px;
+                                pill-height: 26px;
+                                clicked => { root.chatter-threshold-step(-5); }
+                            }
+                            Rectangle {
+                                width: 108px;
+                                height: 26px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.background;
+                                border-color: Theme.border;
+                                border-width: 1px;
+                                Text {
+                                    text: "Limite: " + root.chatter-threshold-ms + " ms";
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    color: Theme.text-primary;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+                            MousePill {
+                                text: "+5 ms";
+                                pill-width: 54px;
+                                pill-height: 26px;
+                                clicked => { root.chatter-threshold-step(5); }
+                            }
+                        }
+
+                        MousePill {
+                            text: "ZERAR CONTADORES";
+                            pill-width: 146px;
+                            pill-height: 26px;
+                            clicked => { root.chatter-reset-clicked(); }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 720px;
+                height: 264px;
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-color: Theme.border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 6px;
+
+                    Text {
+                        text: "TELEMETRIA POR SWITCH FÍSICO";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                    }
+
+                    // Cabeçalho da tabela
+                    HorizontalLayout {
+                        height: 24px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        Text { text: "BOTÃO"; width: 200px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                        Text { text: "CLIQUES"; width: 100px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                        Text { text: "CHATTER"; width: 100px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                        Text { text: "ÚLTIMO HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                        Text { text: "MENOR HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    }
+
+                    for row in root.chatter-rows : Rectangle {
+                        height: 34px;
+                        border-radius: Theme.radius-sm;
+                        background: row.has-chatter ? #3A1C1C : Theme.surface-raised;
+                        border-color: row.has-chatter ? Theme.status-error : Theme.border;
+                        border-width: 1px;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: row.button-name;
+                                width: 200px;
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: row.has-chatter ? Theme.status-error : Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "" + row.total-clicks;
+                                width: 100px;
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "" + row.chatter-count;
+                                width: 100px;
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: row.has-chatter ? Theme.status-error : Theme.status-online;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.last-ms;
+                                width: 130px;
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.min-ms;
+                                width: 130px;
+                                font-family: Theme.mono-font;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: row.has-chatter ? Theme.status-error : Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Dica: se um switch registrar rebotes consistentes (<= limite ms), aumente o Debounce Hardware na sub-aba Performance (ex.: 8-12 ms).";
+                        font-size: 10px;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
                     }
                 }
             }

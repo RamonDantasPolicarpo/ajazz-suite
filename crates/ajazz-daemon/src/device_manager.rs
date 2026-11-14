@@ -1,11 +1,13 @@
 use crate::audio_capture::AudioSyncEngine;
+use crate::chattering::{spawn_chattering_monitor, ChatteringDetector};
 use crate::gif_decoder::decode_gif_to_matrix_frames;
 use crate::profile_store::{load_profile, save_profile};
 use crate::screen_capture::ScreenCapturer;
 use ajazz_protocol::hidapi;
 use ajazz_protocol::mouse::{
-    Aj179MouseDevice, MouseAsyncEvent, MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus,
-    MOUSE_BUTTON_COUNT,
+    Aj179MouseDevice, ChatteringConfig, MouseAsyncEvent, MouseButtonSlot, MouseConfig,
+    MouseProfile, MouseStatus, SwitchChatteringSnapshot, MOUSE_BUTTON_COUNT,
+    MOUSE_MACRO_MAX_SLOTS,
 };
 use ajazz_protocol::{
     Ak820Device, GifCrop, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
@@ -14,7 +16,7 @@ use ajazz_protocol::{
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -49,12 +51,22 @@ pub enum DeviceCommand {
     CaptureFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     AudioFrame([RgbColor; TOTAL_PHYSICAL_LEDS]),
     GetStatus(oneshot::Sender<DeviceStatus>),
-    GetMouseStatus(oneshot::Sender<(bool, Option<MouseStatus>, MouseProfile)>),
+    GetMouseStatus(
+        oneshot::Sender<(
+            bool,
+            Option<MouseStatus>,
+            MouseProfile,
+            SwitchChatteringSnapshot,
+        )>,
+    ),
     SetMouseConfig(MouseConfig, oneshot::Sender<Result<(), String>>),
     SetMouseButton(u8, MouseButtonSlot, oneshot::Sender<Result<(), String>>),
     ResetMouseButtons(oneshot::Sender<Result<(), String>>),
     SyncMouseFromDevice(oneshot::Sender<Result<(), String>>),
     StartMousePairing(oneshot::Sender<Result<(), String>>),
+    UploadMouseMacros(oneshot::Sender<Result<(), String>>),
+    SetChatteringConfig(ChatteringConfig, oneshot::Sender<Result<(), String>>),
+    ResetChatteringStats(oneshot::Sender<Result<(), String>>),
 }
 
 fn cancel_active_streams(
@@ -175,6 +187,10 @@ pub async fn run_device_actor(
     let mut mouse_status: Option<MouseStatus> = None;
     let mut last_mouse_poll: Option<Instant> = None;
     let mut profile = load_profile();
+    let chattering_detector = Arc::new(Mutex::new(ChatteringDetector::new(
+        profile.mouse.chattering,
+    )));
+    spawn_chattering_monitor(Arc::clone(&chattering_detector));
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
     let mut pre_gif_lighting: Option<LightingConfig> = None;
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
@@ -352,10 +368,27 @@ pub async fn run_device_actor(
                     save_profile(&profile);
                     Ok(())
                 };
+                if result.is_ok() {
+                    if let Some(slot_idx) = profile.macros.iter().position(|m| m.id == target_id) {
+                        let used_by_mouse = profile.mouse.buttons.iter().any(|b| {
+                            matches!(b, MouseButtonSlot::Macro { index, .. } if usize::from(*index) == slot_idx)
+                        });
+                        if used_by_mouse {
+                            if let Some(ref mut mdev) = mouse_dev {
+                                if let Err(e) = mdev.upload_macros(&profile.macros) {
+                                    warn!("Falha ao atualizar macro no mouse conectado: {e}");
+                                    mouse_dev = None;
+                                    mouse_status = None;
+                                }
+                            }
+                        }
+                    }
+                }
                 let _ = resp.send(result);
             }
 
             DeviceCommand::DeleteMacro(id, resp) => {
+                let deleted_idx = profile.macros.iter().position(|m| m.id == id);
                 let next_macros: Vec<MacroDefinition> = profile
                     .macros
                     .iter()
@@ -366,23 +399,51 @@ pub async fn run_device_actor(
                 let had_ref = next_keymap.values().any(
                     |a| matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &id),
                 );
-                if had_ref {
+                let result = if had_ref {
                     next_keymap.retain(|_, a| {
                         !matches!(a, KeyAssignment::Macro { macro_id, .. } if macro_id == &id)
                     });
-                    let result = apply_keymap_command(
+                    apply_keymap_command(
                         &mut device,
                         &mut hid_api,
                         &mut profile,
                         next_keymap,
                         next_macros,
-                    );
-                    let _ = resp.send(result);
+                    )
                 } else {
                     profile.macros = next_macros;
                     save_profile(&profile);
-                    let _ = resp.send(Ok(()));
+                    Ok(())
+                };
+                if result.is_ok() {
+                    if let Some(del_i) = deleted_idx {
+                        let mut mouse_changed = false;
+                        for (btn_idx, slot) in profile.mouse.buttons.iter_mut().enumerate() {
+                            if let MouseButtonSlot::Macro { index, .. } = slot {
+                                let idx_u = usize::from(*index);
+                                if idx_u == del_i {
+                                    *slot = MouseButtonSlot::DEFAULT_FIVE[btn_idx].clone();
+                                    mouse_changed = true;
+                                } else if idx_u > del_i {
+                                    *index -= 1;
+                                    mouse_changed = true;
+                                }
+                            }
+                        }
+                        if mouse_changed {
+                            save_profile(&profile);
+                            if let Some(ref mut mdev) = mouse_dev {
+                                let _ = mdev.upload_macros(&profile.macros);
+                                if let Err(e) = mdev.set_keymap(&profile.mouse.buttons) {
+                                    warn!("Falha ao atualizar botões do mouse após exclusão de macro: {e}");
+                                    mouse_dev = None;
+                                    mouse_status = None;
+                                }
+                            }
+                        }
+                    }
                 }
+                let _ = resp.send(result);
             }
 
             DeviceCommand::SyncFromDevice(resp) => {
@@ -613,10 +674,15 @@ pub async fn run_device_actor(
                     &mut hid_api,
                     &mut profile,
                 );
+                let chatter_snap = chattering_detector
+                    .lock()
+                    .map(|d| d.snapshot())
+                    .unwrap_or_default();
                 let _ = resp.send((
                     mouse_dev.is_some(),
                     mouse_status.clone(),
                     profile.mouse.clone(),
+                    chatter_snap,
                 ));
             }
 
@@ -666,6 +732,33 @@ pub async fn run_device_actor(
             DeviceCommand::StartMousePairing(resp) => {
                 let res = start_mouse_pairing_command(&mut mouse_dev, &mut mouse_status, &mut hid_api);
                 let _ = resp.send(res);
+            }
+
+            DeviceCommand::UploadMouseMacros(resp) => {
+                let res = apply_mouse_upload_macros_command(
+                    &mut mouse_dev,
+                    &mut mouse_status,
+                    &mut hid_api,
+                    &profile.macros,
+                );
+                let _ = resp.send(res);
+            }
+
+            DeviceCommand::SetChatteringConfig(mut cfg, resp) => {
+                cfg.normalize();
+                profile.mouse.chattering = cfg;
+                save_profile(&profile);
+                if let Ok(mut det) = chattering_detector.lock() {
+                    det.set_config(cfg);
+                }
+                let _ = resp.send(Ok(()));
+            }
+
+            DeviceCommand::ResetChatteringStats(resp) => {
+                if let Ok(mut det) = chattering_detector.lock() {
+                    det.reset_stats();
+                }
+                let _ = resp.send(Ok(()));
             }
         }
     }
@@ -1065,7 +1158,24 @@ fn apply_mouse_button_command(
     if (slot as usize) >= MOUSE_BUTTON_COUNT {
         return Err(format!("Botão inválido: {slot}"));
     }
+    if let MouseButtonSlot::Macro { index, .. } = assignment {
+        let idx = usize::from(index);
+        if idx >= MOUSE_MACRO_MAX_SLOTS || idx >= profile.macros.len() {
+            return Err(format!("Slot de macro #{index} inexistente ou vazio."));
+        }
+        if profile.macros[idx].steps.is_empty() {
+            return Err(format!("A macro '{}' não possui passos gravados.", profile.macros[idx].name));
+        }
+    }
     let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    if matches!(assignment, MouseButtonSlot::Macro { .. }) {
+        if let Err(e) = dev.upload_macros(&profile.macros) {
+            warn!("Erro ao enviar macros (06 31) ao mouse: {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            return Err(format!("Erro ao gravar macros no mouse: {e}"));
+        }
+    }
     let mut updated = profile.mouse.buttons.clone();
     updated[slot as usize] = assignment;
     match dev.set_keymap(&updated) {
@@ -1080,6 +1190,30 @@ fn apply_mouse_button_command(
             *mouse_dev = None;
             *mouse_status = None;
             Err(format!("Erro de comunicação USB com o mouse: {e}"))
+        }
+    }
+}
+
+fn apply_mouse_upload_macros_command(
+    mouse_dev: &mut Option<Aj179MouseDevice>,
+    mouse_status: &mut Option<MouseStatus>,
+    hid_api: &mut Option<hidapi::HidApi>,
+    macros: &[MacroDefinition],
+) -> Result<(), String> {
+    let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
+    match dev.upload_macros(macros) {
+        Ok(()) => {
+            info!(
+                "Contêiner de macros ({} entradas) gravado no mouse via 06 31.",
+                macros.len().min(MOUSE_MACRO_MAX_SLOTS)
+            );
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Erro ao enviar macros (06 31) ao mouse: {e}");
+            *mouse_dev = None;
+            *mouse_status = None;
+            Err(format!("Erro ao gravar macros no mouse: {e}"))
         }
     }
 }

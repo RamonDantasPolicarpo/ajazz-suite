@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::keymap::SystemKey;
+use crate::keymap::{MouseButton, SystemKey};
+use crate::macros::{MacroAction, MacroDefinition, MacroStep};
 use crate::{HID_REPORT_PAYLOAD_SIZE, MOUSE_NEARLINK_VID, ProtocolError};
 
 /// PIDs oficiais do mouse AJAZZ AJ179 NL P (`config.xml` / `aj179.xml`).
@@ -25,6 +26,11 @@ pub const MOUSE_MAX_DPI_STAGES: usize = 6;
 pub const MOUSE_DEBOUNCE_MIN_MS: u8 = 1;
 pub const MOUSE_DEBOUNCE_MAX_MS: u8 = 50;
 pub const MOUSE_BUTTON_COUNT: usize = 5;
+pub const MOUSE_MACRO_MAX_SLOTS: usize = 32;
+pub const MOUSE_MACRO_HEADER_SIZE: usize = 0x40;
+pub const MOUSE_MACRO_MAX_BYTES: usize = 0xFA0;
+pub const MOUSE_MACRO_CHUNK_SIZE: usize = 59;
+pub const MOUSE_MACRO_MAX_DELAY_MS: u16 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseConnectionMode {
@@ -344,11 +350,81 @@ impl MouseButtonSlot {
     }
 }
 
+pub const CHATTERING_THRESHOLD_MIN_MS: u16 = 5;
+pub const CHATTERING_THRESHOLD_MAX_MS: u16 = 150;
+pub const CHATTERING_DEFAULT_THRESHOLD_MS: u16 = 45;
+
+/// Configuração persistente do monitor de **Switch Chattering** do mouse no Daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChatteringConfig {
+    pub enabled: bool,
+    pub threshold_ms: u16,
+}
+
+impl Default for ChatteringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_ms: CHATTERING_DEFAULT_THRESHOLD_MS,
+        }
+    }
+}
+
+impl ChatteringConfig {
+    pub fn normalize(&mut self) {
+        self.threshold_ms = self
+            .threshold_ms
+            .clamp(CHATTERING_THRESHOLD_MIN_MS, CHATTERING_THRESHOLD_MAX_MS);
+    }
+}
+
+/// Métricas acumuladas de **Switch Chattering** para um botão físico do mouse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchChatteringButtonStats {
+    pub button: MouseButton,
+    pub total_clicks: u64,
+    pub chatter_count: u64,
+    pub last_interval_ms: Option<u32>,
+    pub min_interval_ms: Option<u32>,
+}
+
+/// Snapshot instantâneo da telemetria de **Switch Chattering** mantida pelo Daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchChatteringSnapshot {
+    pub enabled: bool,
+    pub threshold_ms: u16,
+    pub total_chatter_events: u64,
+    pub last_chatter_button: Option<MouseButton>,
+    pub last_chatter_interval_ms: Option<u32>,
+    pub per_button: [SwitchChatteringButtonStats; MOUSE_BUTTON_COUNT],
+}
+
+impl Default for SwitchChatteringSnapshot {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_ms: CHATTERING_DEFAULT_THRESHOLD_MS,
+            total_chatter_events: 0,
+            last_chatter_button: None,
+            last_chatter_interval_ms: None,
+            per_button: MouseButton::ALL.map(|button| SwitchChatteringButtonStats {
+                button,
+                total_clicks: 0,
+                chatter_count: 0,
+                last_interval_ms: None,
+                min_interval_ms: None,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MouseProfile {
     pub config: MouseConfig,
     pub buttons: [MouseButtonSlot; MOUSE_BUTTON_COUNT],
+    pub chattering: ChatteringConfig,
 }
 
 impl Default for MouseProfile {
@@ -356,6 +432,7 @@ impl Default for MouseProfile {
         Self {
             config: MouseConfig::default(),
             buttons: MouseButtonSlot::DEFAULT_FIVE,
+            chattering: ChatteringConfig::default(),
         }
     }
 }
@@ -509,6 +586,202 @@ pub fn build_set_keymap_packet(slots: &[MouseButtonSlot]) -> [u8; HID_REPORT_PAY
         pkt[base..base + 4].copy_from_slice(&slot.to_wire());
     }
     pkt
+}
+
+/// Garante que teclas, modificadores ou botões pressionados tenham um release correspondente (`sub_41dd70`).
+fn pair_dangling_releases(steps: &[MacroStep]) -> Vec<MacroStep> {
+    let mut out = steps.to_vec();
+    let mut held_keys: Vec<u8> = Vec::new();
+    let mut held_mods: Vec<u8> = Vec::new();
+    let mut held_mouse: Vec<MouseButton> = Vec::new();
+
+    for step in steps {
+        match step.action {
+            MacroAction::Key { hid_usage, down } => {
+                if (0xE0..=0xE7).contains(&hid_usage) {
+                    let mask = 1u8 << (hid_usage - 0xE0);
+                    if down {
+                        if !held_mods.contains(&mask) {
+                            held_mods.push(mask);
+                        }
+                    } else {
+                        held_mods.retain(|&m| m != mask);
+                    }
+                } else if down {
+                    if !held_keys.contains(&hid_usage) {
+                        held_keys.push(hid_usage);
+                    }
+                } else {
+                    held_keys.retain(|&k| k != hid_usage);
+                }
+            }
+            MacroAction::Modifier { bitmask, down } => {
+                if down {
+                    if !held_mods.contains(&bitmask) {
+                        held_mods.push(bitmask);
+                    }
+                } else {
+                    held_mods.retain(|&m| m != bitmask);
+                }
+            }
+            MacroAction::MouseButton { button, down } => {
+                if down {
+                    if !held_mouse.contains(&button) {
+                        held_mouse.push(button);
+                    }
+                } else {
+                    held_mouse.retain(|&b| b != button);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for k in held_keys.into_iter().rev() {
+        out.push(MacroStep {
+            delay_ms: 10,
+            action: MacroAction::Key {
+                hid_usage: k,
+                down: false,
+            },
+        });
+    }
+    for m in held_mods.into_iter().rev() {
+        out.push(MacroStep {
+            delay_ms: 10,
+            action: MacroAction::Modifier {
+                bitmask: m,
+                down: false,
+            },
+        });
+    }
+    for b in held_mouse.into_iter().rev() {
+        out.push(MacroStep {
+            delay_ms: 10,
+            action: MacroAction::MouseButton {
+                button: b,
+                down: false,
+            },
+        });
+    }
+    out
+}
+
+/// Codifica um passo de macro no formato de 4 bytes do AJ179 (`sub_430860`).
+fn encode_mouse_macro_step(step: &MacroStep, is_first: bool) -> [u8; 4] {
+    let delay = if is_first && step.delay_ms == 0 {
+        10
+    } else {
+        step.delay_ms.min(MOUSE_MACRO_MAX_DELAY_MS)
+    };
+    let [d_lo, mut d_hi] = delay.to_le_bytes();
+    let (flags, code) = match step.action {
+        MacroAction::Key { hid_usage, down } => {
+            if (0xE0..=0xE7).contains(&hid_usage) {
+                let mask = 1u8 << (hid_usage - 0xE0);
+                (if down { 0x41 } else { 0x01 }, mask)
+            } else {
+                (if down { 0x42 } else { 0x02 }, hid_usage)
+            }
+        }
+        MacroAction::Modifier { bitmask, down } => (if down { 0x41 } else { 0x01 }, bitmask),
+        MacroAction::MouseButton { button, down } => {
+            (if down { 0x43 } else { 0x03 }, button as u8)
+        }
+        MacroAction::MouseMoveX { delta } => {
+            let d = delta.clamp(-15, 15);
+            if d < 0 {
+                d_hi |= 0x80;
+            }
+            (0x06, ((d as u8) & 0x0F) << 4)
+        }
+        MacroAction::MouseMoveY { delta } => {
+            let d = delta.clamp(-15, 15);
+            if d < 0 {
+                d_hi |= 0x40;
+            }
+            (0x06, (d as u8) & 0x0F)
+        }
+        MacroAction::Raw {
+            event_type,
+            down,
+            button,
+        } => {
+            let wire_flags = if down {
+                (event_type & 0xBF) | 0x40
+            } else {
+                event_type
+            };
+            (wire_flags, button)
+        }
+    };
+    [d_lo, d_hi, flags, code]
+}
+
+/// Compila até 32 macros no contêiner binário de `sub_430860` (`[0x00..0x3F]` offsets LE + corpo `0x40..`, máx 4000 bytes).
+pub fn compile_mouse_macros_container(
+    macros: &[MacroDefinition],
+) -> Result<Vec<u8>, ProtocolError> {
+    let mut buf = vec![0u8; MOUSE_MACRO_HEADER_SIZE];
+    for (slot_idx, macro_def) in macros.iter().take(MOUSE_MACRO_MAX_SLOTS).enumerate() {
+        let normalized = pair_dangling_releases(&macro_def.steps);
+        if normalized.is_empty() {
+            continue;
+        }
+        let start_offset = buf.len();
+        let needed = normalized.len() * 4 + 8;
+        if start_offset + needed > MOUSE_MACRO_MAX_BYTES {
+            return Err(ProtocolError::InvalidPayloadSize {
+                expected: MOUSE_MACRO_MAX_BYTES,
+                received: start_offset + needed,
+            });
+        }
+        let [o_lo, o_hi] = (start_offset as u16).to_le_bytes();
+        buf[slot_idx * 2] = o_lo;
+        buf[slot_idx * 2 + 1] = o_hi;
+
+        for (step_idx, step) in normalized.iter().enumerate() {
+            buf.extend_from_slice(&encode_mouse_macro_step(step, step_idx == 0));
+        }
+        // Terminador obrigatório em [+4..+7] (`[10ms, 0x83, 0x01]`) + 4 bytes zero de padding (`sub_430860`).
+        buf.extend_from_slice(&[0x0A, 0x00, 0x83, 0x01, 0x00, 0x00, 0x00, 0x00]);
+    }
+    Ok(buf)
+}
+
+/// Fatiamento `06 31` de até `59` (`0x3B`) bytes por pacote HID (`loc_430f3a..0x4310a2`).
+pub fn build_upload_mouse_macros_packets(
+    container: &[u8],
+) -> Result<Vec<[u8; HID_REPORT_PAYLOAD_SIZE]>, ProtocolError> {
+    if container.is_empty() || container.len() > MOUSE_MACRO_MAX_BYTES {
+        return Err(ProtocolError::InvalidPayloadSize {
+            expected: MOUSE_MACRO_MAX_BYTES,
+            received: container.len(),
+        });
+    }
+    let total_len = container.len();
+    let full_chunks = total_len / MOUSE_MACRO_CHUNK_SIZE;
+    let num_packets = full_chunks + 1;
+    let mut packets = Vec::with_capacity(num_packets);
+
+    for chunk_idx in 0..num_packets {
+        let offset = chunk_idx * MOUSE_MACRO_CHUNK_SIZE;
+        let chunk_len = if chunk_idx == full_chunks {
+            total_len - offset
+        } else {
+            MOUSE_MACRO_CHUNK_SIZE
+        };
+        let mut pkt = [0u8; HID_REPORT_PAYLOAD_SIZE];
+        pkt[0] = MOUSE_REPORT_ID;
+        pkt[1] = 0x31;
+        pkt[2] = chunk_len as u8;
+        pkt[3..5].copy_from_slice(&(offset as u16).to_le_bytes());
+        if chunk_len > 0 {
+            pkt[5..5 + chunk_len].copy_from_slice(&container[offset..offset + chunk_len]);
+        }
+        packets.push(pkt);
+    }
+    Ok(packets)
 }
 
 pub fn build_apply_packet() -> [u8; HID_REPORT_PAYLOAD_SIZE] {
@@ -763,6 +1036,17 @@ impl Aj179MouseDevice {
         self.write_and_maybe_read(&pkt, true, 150).map(|_| ())
     }
 
+    /// Compila e envia o contêiner de macros (`06 31`) em fatias de 59 bytes com intervalo de 10 ms (`sub_430860`).
+    pub fn upload_macros(&mut self, macros: &[MacroDefinition]) -> Result<(), ProtocolError> {
+        let container = compile_mouse_macros_container(macros)?;
+        let packets = build_upload_mouse_macros_packets(&container)?;
+        for pkt in packets {
+            self.write_and_maybe_read(&pkt, true, 150)?;
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
     pub fn apply_refresh(&mut self) -> Result<(), ProtocolError> {
         let pkt = build_apply_packet();
         self.write_and_maybe_read(&pkt, false, 0).map(|_| ())
@@ -944,5 +1228,131 @@ mod tests {
         let raw_no_zero = [0x06, 0x05, 0xBB];
         let norm2 = normalize_rx_report(&raw_no_zero);
         assert_eq!(norm2[..3], [0x06, 0x05, 0xBB]);
+    }
+
+    #[test]
+    fn mouse_macro_container_matches_sub_430860_layout() {
+        let macros = vec![
+            MacroDefinition {
+                id: "m1".into(),
+                name: "Ctrl+A+Click".into(),
+                steps: vec![
+                    // Left Ctrl via HID 0xE0 -> modifier 0x41 mask 0x01; delay 0 -> 10ms no passo 0
+                    MacroStep {
+                        delay_ms: 0,
+                        action: MacroAction::Key {
+                            hid_usage: 0xE0,
+                            down: true,
+                        },
+                    },
+                    // 'A' (HID 0x04) -> normal key 0x42, delay 30ms
+                    MacroStep {
+                        delay_ms: 30,
+                        action: MacroAction::Key {
+                            hid_usage: 0x04,
+                            down: true,
+                        },
+                    },
+                    // Espera Release automático de 'A' e Ctrl (pair_dangling_releases)
+                    // mais um clique Forward down/up
+                    MacroStep {
+                        delay_ms: 15,
+                        action: MacroAction::MouseButton {
+                            button: MouseButton::Forward,
+                            down: true,
+                        },
+                    },
+                    MacroStep {
+                        delay_ms: 20,
+                        action: MacroAction::MouseButton {
+                            button: MouseButton::Forward,
+                            down: false,
+                        },
+                    },
+                ],
+            },
+            MacroDefinition {
+                id: "m2".into(),
+                name: "Move XY".into(),
+                steps: vec![
+                    MacroStep {
+                        delay_ms: 12,
+                        action: MacroAction::MouseMoveX { delta: -3 },
+                    },
+                    MacroStep {
+                        delay_ms: 12,
+                        action: MacroAction::MouseMoveY { delta: -2 },
+                    },
+                ],
+            },
+        ];
+
+        let container = compile_mouse_macros_container(&macros).unwrap();
+        // Slot 0 começa em 0x0040; Slot 2..31 permanecem 0x0000
+        assert_eq!(u16::from_le_bytes([container[0], container[1]]), 0x0040);
+        assert_eq!(u16::from_le_bytes([container[4], container[5]]), 0x0000);
+
+        // Passo 0 (0x40): 10ms + 0x41 (Mod Down) + 0x01 (LCtrl bitmask)
+        assert_eq!(&container[0x40..0x44], &[0x0A, 0x00, 0x41, 0x01]);
+        // Passo 1 (0x44): 30ms + 0x42 (Key Down) + 0x04 ('A')
+        assert_eq!(&container[0x44..0x48], &[0x1E, 0x00, 0x42, 0x04]);
+        // Passo 2 (0x48): Forward Down (0x43, 0x10)
+        assert_eq!(&container[0x48..0x4C], &[0x0F, 0x00, 0x43, 0x10]);
+        // Passo 3 (0x4C): Forward Up (0x03, 0x10)
+        assert_eq!(&container[0x4C..0x50], &[0x14, 0x00, 0x03, 0x10]);
+        // Auto-release Key 'A' (0x50) e Modifier LCtrl (0x54)
+        assert_eq!(&container[0x50..0x54], &[0x0A, 0x00, 0x02, 0x04]);
+        assert_eq!(&container[0x54..0x58], &[0x0A, 0x00, 0x01, 0x01]);
+        // Terminador [10ms, 0x83, 0x01] + 4 zero bytes padding em 0x58..0x60
+        assert_eq!(
+            &container[0x58..0x60],
+            &[0x0A, 0x00, 0x83, 0x01, 0x00, 0x00, 0x00, 0x00]
+        );
+
+        // Slot 1 começa imediatamente após padding (0x0060)
+        assert_eq!(u16::from_le_bytes([container[2], container[3]]), 0x0060);
+        // Move X -3: delay 12 | 0x8000 em LE = [0x0C, 0x80], type 0x06, (-3 as u8 & 0x0F) << 4 = 0xD0
+        assert_eq!(&container[0x60..0x64], &[0x0C, 0x80, 0x06, 0xD0]);
+        // Move Y -2: delay 12 | 0x4000 em LE = [0x0C, 0x40], type 0x06, (-2 as u8 & 0x0F) = 0x0E
+        assert_eq!(&container[0x64..0x68], &[0x0C, 0x40, 0x06, 0x0E]);
+    }
+
+    #[test]
+    fn mouse_macro_chunking_uses_59_byte_packets() {
+        // Container com 120 bytes => 3 pacotes: 59 + 59 + 2
+        let container = vec![0xAAu8; 120];
+        let pkts = build_upload_mouse_macros_packets(&container).unwrap();
+        assert_eq!(pkts.len(), 3);
+        assert_eq!(&pkts[0][..5], &[0x06, 0x31, 59, 0x00, 0x00]);
+        assert_eq!(&pkts[1][..5], &[0x06, 0x31, 59, 59, 0x00]);
+        assert_eq!(&pkts[2][..5], &[0x06, 0x31, 2, 118, 0x00]);
+        assert_eq!(pkts[2][5], 0xAA);
+        assert_eq!(pkts[2][6], 0xAA);
+        assert_eq!(pkts[2][7], 0x00);
+
+        // Tamanho exatamente divisível por 59 => pacote extra final com len=0 (`sub_430860`)
+        let exact = vec![0x55u8; 118];
+        let pkts_exact = build_upload_mouse_macros_packets(&exact).unwrap();
+        assert_eq!(pkts_exact.len(), 3);
+        assert_eq!(&pkts_exact[2][..5], &[0x06, 0x31, 0, 118, 0x00]);
+    }
+
+    #[test]
+    fn mouse_macro_container_rejects_overflow_above_4000_bytes() {
+        let too_many_steps: Vec<MacroStep> = (0..1000)
+            .map(|_| MacroStep {
+                delay_ms: 10,
+                action: MacroAction::MouseButton {
+                    button: MouseButton::Left,
+                    down: true,
+                },
+            })
+            .collect();
+        let res = compile_mouse_macros_container(&[MacroDefinition {
+            id: "huge".into(),
+            name: "Huge".into(),
+            steps: too_many_steps,
+        }]);
+        assert!(matches!(res, Err(ProtocolError::InvalidPayloadSize { .. })));
     }
 }
