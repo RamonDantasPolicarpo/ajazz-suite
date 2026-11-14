@@ -592,7 +592,8 @@ pub fn parse_async_notify(rx: &[u8; HID_REPORT_PAYLOAD_SIZE]) -> Option<MouseAsy
     match rx[5] {
         1 | 6 => Some(MouseAsyncEvent::Reconnect),
         2 => Some(MouseAsyncEvent::DpiStageChanged { index: rx[6] }),
-        3 => Some(MouseAsyncEvent::BatteryUpdated {
+        // `sub_434ae0` ignora `rx[6] == 0` para não zerar bateria em repouso/transição.
+        3 if rx[6] != 0 => Some(MouseAsyncEvent::BatteryUpdated {
             battery_percent: rx[6].min(100),
             charging: rx[7] != 0,
         }),
@@ -929,6 +930,9 @@ mod tests {
                 battery_percent: 77,
             })
         );
+
+        notify[6] = 0;
+        assert_eq!(parse_async_notify(&notify), None);
     }
 
     #[test]

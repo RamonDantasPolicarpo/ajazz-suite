@@ -4,16 +4,19 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Mouse AJ179 NL P Integrado Fim-a-Fim (Protocol + Daemon + GUI) — Aguardando Validação de Escrita no Hardware
+## 1. Posição Atual: Paridade Core do Teclado AK820 e Mouse AJ179 NL P Validados em Hardware
 
 - **Mouse AJAZZ AJ179 NL P (`NearLink BS25/BS2X`, `AJAZZ Driver（W1）.exe`):**
   - Política anti-brick e bloqueio de DFU/Bootloader registrada em [ADR-0003](docs/adr/0003-mouse-anti-brick-and-dfu-lockout.md) (`UsagePage 0xFFB1`, `BurnTool.exe`, `libburn.dll` e `06 0F ... FF` estritamente bloqueados).
-  - Protocolo HID proprietário documentado em [mouse_protocol.md](docs/protocol/mouse_protocol.md) (`VID 0x7768`, `PID 0x642E` 2.4G / `0x6D2E` USB, `UsagePage 0xFFB2 / Usage 0x01`, reports de 64 bytes) e implementado em `crates/ajazz-protocol/src/mouse.rs` (`Aj179MouseDevice`, `MouseStatus`, `MouseConfig`, `MouseButtonSlot`, `MouseProfile`, validado por leitura real no hardware em 2.4G: FW `1.0.14`, bateria `50%`, 6 estágios DPI).
+  - Protocolo HID proprietário documentado em [mouse_protocol.md](docs/protocol/mouse_protocol.md) (`VID 0x7768`, `PID 0x642E` 2.4G / `0x6D2E` USB, `UsagePage 0xFFB2 / Usage 0x01`, reports de 64 bytes) e implementado em `crates/ajazz-protocol/src/mouse.rs` (`Aj179MouseDevice`, `MouseStatus`, `MouseConfig`, `MouseButtonSlot`, `MouseProfile`, validado por leitura/escrita real no hardware: FW `1.0.14`, bateria reportada pelo firmware em passos de `10%` — validado `40%` -> cabo `CHG` -> `70%`, DPI, Scroll, LOD, Polling Rate, Ripple Control e Linear Correction/Angle Snapping sincronizando inclusive com o app oficial).
+  - **Diagnóstico de Bateria + Polling (`DUI.dll` + `06 05` ao vivo)**:
+    - Evidenciado em `DUI.dll` (`BatteryCtrl::DrawControl`) que o app oficial exibe 5 faixas (`<25`, `<50`, `<75`, `<95`, `>=95`) sobre `rx[13]`, enquanto o mouse real reporta `0x32` (`50%`) em `rx[13]`.
+    - `ajazz-daemon` passou a re-consultar `06 05` periodicamente a cada 15s (`MOUSE_STATUS_REFRESH_INTERVAL`), preservando bateria/config em cache quando `rx[12] == 0` (sleep, igual a `sub_42f930`) e ignorando `0xFA 03` com `rx[6] == 0` (igual a `sub_434ae0`).
   - **Correções pós-validação no Mouse**:
     - `b690faa`: corrigido bug de polling periódico `MouseStatus` sobrescrevendo rascunhos de botões e DPI na GUI.
-    - Diagnosticado via `diagnosing-bugs` + `Kernel-Power` Event 506 (`Power Button`) + `AJAZZ Driver（W1）.exe` (`sub_4247b0` + `sub_415a80`): `[0x40, 0x01/0x02/0x04, 0x00, 0x00]` são **atalhos ACPI de Sistema (`SystemKey`: Power/Sleep/Wake)** via `UsagePage 0x01 / Usage 0x80`, não Sniper DPI (`215/216` em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no AJ179). `MouseButtonSlot::SniperDpi` substituído por `MouseButtonSlot::System(SystemKey)` (com migração segura de perfis legados `SniperDpi` -> `Disable`) e aba `Sniper DPI` renomeada para `Sistema` com avisos explícitos.
-  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA` e persistência em `UserProfile.mouse`.
-  - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (2 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`) com telemetria global de bateria/conexão na Sidebar, barra fixa de telemetria, 3 sub-abas (`Performance & Sensor` com 6 estágios DPI/Polling/LOD/Sensor/Debounce, `Botões` com esquema visual dos 5 botões + trava anti-lockout do Clique Esquerdo, `Energia & Conexão` com presets de Sleep/Scroll/Pareamento 2.4G em 2 cliques) e modo rascunho + `Aplicar no Mouse` / `Sincronizar`. Todos os 38 testes do workspace passam.
+    - `6720984`: diagnosticado via `diagnosing-bugs` + `Kernel-Power` Event 506 + `AJAZZ Driver（W1）.exe` (`sub_4247b0` + `sub_415a80`): `[0x40, 0x01/0x02/0x04, 0x00, 0x00]` são **atalhos ACPI de Sistema (`SystemKey`: Power/Sleep/Wake)** via `UsagePage 0x01 / Usage 0x80`, não Sniper DPI (`215/216` em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no AJ179). `MouseButtonSlot::SniperDpi` substituído por `MouseButtonSlot::System(SystemKey)` (com migração segura de perfis legados `SniperDpi` -> `Disable`) e aba `Sistema` com avisos explícitos.
+  - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA`, refresh periódico de `06 05` (15s) e persistência em `UserProfile.mouse`.
+  - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (2 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`). SVGs `shape_mouse_cima.svg` e `shape_mouse_lado.svg` adicionados na raiz para futura rodada visual (após **Grill Me**). Todos os 42 testes do workspace passam.
 
 - **Protocolo e Engenharia Reversa (`docs/protocol/hid_protocol.md` + `ajazz-protocol`):**
   - **`SystemStages` (`Opcode 0x05` / `0x06`)**: `HID[27]=WFlag`, `HID[28]=Key6Flag`, `HID[29]=WinFlag`, `HID[30]=PollingRate` (`0..3` -> `1000/500/250/125 Hz`), `HID[35]=MacMode`, `HID[36]=Wheel`. Configurado de forma unificada (`build_config_packet` / `parse_config_block`) para preservar iluminação e flags de sistema juntos.
@@ -67,11 +70,12 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `dbcfe99`: `feat(protocol): implement AJ179 NL P HID codecs and validated status reader`
 - `a4a0590`: `feat(daemon): integrate AJ179 NL P mouse IPC, state sync, and hot-unplug handling`
 - `b690faa`: `fix(gui): prevent periodic MouseStatus polls from resetting button and DPI drafts`
+- `6720984`: `fix(protocol,gui): reclassify 0x40 mouse codes as ACPI System Power/Sleep/Wake`
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. **Validação ao Vivo no Mouse Físico (`AJ179 NL P`)**: executar `ajazz-daemon` + `ajazz-gui` e validar escrita ao vivo no hardware (DPI `50..26000`, troca de estágio, LOD, sensor flags, polling rate, debounce, sleep e remapeamento dos 5 botões).
-2. **Refinamentos do GIF Player (pós-consolidação)**: adicionar enquadramento/recorte (*crop* / *pan & zoom*) da região do GIF projetada na matriz e controle fino de velocidade/FPS mais baixos (1–10 FPS / multiplicador).
-3. **Macros no Mouse (`06 31`) + Detector de Switch Chattering**: adicionar suporte de macros do mouse (`06 31`) caso necessário após validação e diagnóstico de chattering.
+1. **Refinamentos do GIF Player (`ajazz-daemon` + `ajazz-protocol`)**: enquadramento/recorte (*crop* / *pan & zoom*) da região projetada no `Key Matrix Frame` e velocidades mais lentas abaixo de 15 FPS.
+2. **Macros no Mouse (`06 31`) e Detector de Switch Chattering**: codificação/upload de macros para o AJ179 NL P (`06 31`) e diagnóstico ao vivo de `Switch Chattering`.
+3. **Melhorias Visuais na GUI (`ajazz-gui`)**: rodada obrigatória de **Grill Me** para integrar `shape_mouse_cima.svg` / `shape_mouse_lado.svg` e ajustes visuais finais junto dos controles das novas features.

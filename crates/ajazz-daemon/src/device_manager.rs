@@ -16,7 +16,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
@@ -173,6 +173,7 @@ pub async fn run_device_actor(
     let mut device: Option<Ak820Device> = None;
     let mut mouse_dev: Option<Aj179MouseDevice> = None;
     let mut mouse_status: Option<MouseStatus> = None;
+    let mut last_mouse_poll: Option<Instant> = None;
     let mut profile = load_profile();
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
     let mut pre_gif_lighting: Option<LightingConfig> = None;
@@ -192,6 +193,7 @@ pub async fn run_device_actor(
             );
             if let Ok(st) = mdev.read_status() {
                 mouse_status = Some(st);
+                last_mouse_poll = Some(Instant::now());
             }
             mouse_dev = Some(mdev);
         }
@@ -601,7 +603,13 @@ pub async fn run_device_actor(
             }
 
             DeviceCommand::GetMouseStatus(resp) => {
-                poll_or_connect_mouse(&mut mouse_dev, &mut mouse_status, &mut hid_api, &mut profile);
+                poll_or_connect_mouse(
+                    &mut mouse_dev,
+                    &mut mouse_status,
+                    &mut last_mouse_poll,
+                    &mut hid_api,
+                    &mut profile,
+                );
                 let _ = resp.send((
                     mouse_dev.is_some(),
                     mouse_status.clone(),
@@ -854,18 +862,36 @@ fn ensure_mouse_connected<'a>(
         .ok_or_else(|| "Mouse não disponível".to_string())
 }
 
+const MOUSE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+
+/// `sub_42f930` só sobrescreve bateria/config quando `rx[12] != 0` (mouse ativo).
+fn merge_mouse_status_poll(prev: Option<&MouseStatus>, mut next: MouseStatus) -> MouseStatus {
+    if !next.online {
+        if let Some(prev) = prev {
+            if next.battery_percent == 0 {
+                next.battery_percent = prev.battery_percent;
+            }
+            next.config = prev.config.clone();
+        }
+    }
+    next
+}
+
 fn poll_or_connect_mouse(
     mouse_dev: &mut Option<Aj179MouseDevice>,
     mouse_status: &mut Option<MouseStatus>,
+    last_mouse_poll: &mut Option<Instant>,
     hid_api: &mut Option<hidapi::HidApi>,
     profile: &mut UserProfile,
 ) {
     if mouse_dev.is_none() && ensure_mouse_connected(mouse_dev, hid_api).is_err() {
         *mouse_status = None;
+        *last_mouse_poll = None;
         return;
     }
 
-    let mut need_resync = mouse_status.is_none();
+    let mut need_resync = mouse_status.is_none()
+        || last_mouse_poll.is_none_or(|t| t.elapsed() >= MOUSE_STATUS_REFRESH_INTERVAL);
     if let Some(ref mut dev) = mouse_dev {
         for _ in 0..8 {
             match dev.poll_notification(0) {
@@ -892,6 +918,7 @@ fn poll_or_connect_mouse(
                     warn!("Mouse desconectado ao ler notificações: {e}");
                     *mouse_dev = None;
                     *mouse_status = None;
+                    *last_mouse_poll = None;
                     return;
                 }
             }
@@ -901,11 +928,15 @@ fn poll_or_connect_mouse(
     if need_resync {
         if let Some(ref mut dev) = mouse_dev {
             match dev.read_status() {
-                Ok(st) => *mouse_status = Some(st),
+                Ok(st) => {
+                    *mouse_status = Some(merge_mouse_status_poll(mouse_status.as_ref(), st));
+                    *last_mouse_poll = Some(Instant::now());
+                }
                 Err(e) => {
                     warn!("Falha ao consultar status 06 05 do mouse: {e}");
                     *mouse_dev = None;
                     *mouse_status = None;
+                    *last_mouse_poll = None;
                 }
             }
         }
@@ -1124,5 +1155,44 @@ mod tests {
 
         sync_live_streamers(true, &profile, &tx, &mut cap, &mut aud, true);
         assert!(aud.is_none());
+    }
+
+    #[test]
+    fn merge_mouse_status_poll_preserves_battery_and_config_while_sleeping() {
+        use ajazz_protocol::mouse::MouseConnectionMode;
+
+        let prev_cfg = MouseConfig {
+            debounce_ms: 4,
+            ..Default::default()
+        };
+        let prev = MouseStatus {
+            connection_mode: MouseConnectionMode::NearLink24G,
+            online: true,
+            charging: false,
+            battery_percent: 50,
+            mouse_fw: "1.0.14".into(),
+            receiver_fw: Some("1.0.14".into()),
+            raw_mode: 1,
+            report_flag: 15,
+            config: prev_cfg,
+            raw_dpi_words: [7, 15, 32, 63, 47, 63],
+        };
+        let sleeping = MouseStatus {
+            connection_mode: MouseConnectionMode::NearLink24G,
+            online: false,
+            charging: false,
+            battery_percent: 0,
+            mouse_fw: "1.0.14".into(),
+            receiver_fw: Some("1.0.14".into()),
+            raw_mode: 1,
+            report_flag: 0,
+            config: MouseConfig::default(),
+            raw_dpi_words: [0; 6],
+        };
+
+        let merged = merge_mouse_status_poll(Some(&prev), sleeping);
+        assert!(!merged.online);
+        assert_eq!(merged.battery_percent, 50);
+        assert_eq!(merged.config.debounce_ms, 4);
     }
 }
