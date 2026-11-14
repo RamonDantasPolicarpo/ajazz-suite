@@ -4,24 +4,20 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 ---
 
-## 1. Posição Atual: Marco 1 (Protocolo), Marco 2 (Daemon IPC), Marco 3 (GUI Slint) e Mapeamento de Matriz (Estático) CONCLUÍDOS
+## 1. Posição Atual: Paridade Completa do Subsistema de Iluminação AK820 IMPLEMENTADA
 
-- **Engenharia Reversa USB (AK820):**
-  - Protocolo de iluminação estática (`0x06`) e modo Rain (`0x0F`) validados fisicamente.
-  - Mapeamento espacial das 82 teclas físicas do AK820 e `Opcode 0x0B` decodificados e documentados em [hid_protocol.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/protocol/hid_protocol.md).
-  - **Limitação Descoberta no Hardware**: Testes empíricos confirmaram que toda escrita contínua via `Opcode 0x0B` faz o MCU reprocessar a iluminação causando piscada visível. Por ausência de prova de que `0x0B` opere em RAM sem risco de flash wear-out, o streaming contínuo (GIF Player) foi desativado no Daemon e removido da GUI.
-  - Regras de anti-brick e flash wear-out registradas em [AGENTS.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/AGENTS.md).
+- **Engenharia Reversa Estática e Protocolo HID (`ajazz-protocol`):**
+  - Anatomia completa dos 29 bytes (`0x1D`) de `Opcode 0x06` (`sub_492b30`, `LightInfo`, `SystemStages`) e matriz de capacidades dos 19 Lighting Effects (`sub_415010`) decodificada e documentada em [hid_protocol.md](file:///C:/Users/ramon/OneDrive/Documentos/GitHub/eng-reversa-teclado/docs/protocol/hid_protocol.md).
+  - Descobertas críticas corrigidas no fio: inversão `4 - Speed` no byte `0x0B`, flag `MultiColor` (7-Color) no byte `0x0D`, direção `Fx` no byte `0x0C`, `ZZCCLedMode` (`0..3`) no byte `0x1A`, `CustomGroup` (`0..2`) no byte `0x21`, remapeamento `0xFE` para `Capture`/`Audio`, e stride `0x200` (512 bytes) por banco Custom em `Opcode 0x0B` (`sub_47a890`).
+  - Validação física executada em hardware (`Rain MultiColor`, `Corrugated` L↔R, `Custom` banco 0 com transação única fechada `0x01 -> 0x06 -> 0x0B -> 0x02` e restauração `Static`).
 - **Daemon em Segundo Plano (`ajazz-daemon`):**
-  - Servidor IPC Named Pipe (`\\.\pipe\ajazz-daemon`) ativo para controle de cor estática, modos nativos e matriz pontual.
-  - `PlayGif` desativado (`GIF_STREAMING_ENABLED = false`) com retorno de erro explicativo.
-  - Consumo em repouso: **< 10 MB de RAM** e **0% CPU em idle**.
+  - Persistência de **User Profile** em `%APPDATA%\ajazz-companion\config.json` (`profile_store.rs`) para estado de iluminação e 3 bancos Custom estáticos (`Custom 1..3`).
+  - Canal IPC Named Pipe atualizado para `LightingConfig`, `SetCustomBank` e `SelectCustomBank` com sincronização inicial de perfil ao cliente GUI.
+  - `PlayGif` mantido desativado (`GIF_STREAMING_ENABLED = false`) para pesquisa futura segura de modo Áudio/streaming.
 - **Interface Gráfica Nativa (`ajazz-gui`):**
-  - Construída em **Slint**, compilada em binário nativo executável (`target/debug/ajazz-gui.exe`).
-  - **Design Monocromático & Tipografia:** Paleta grafite escuro fosco (`#18181B`), linhas sutis de 1px (`#32323A`), tipografia JetBrains Mono.
-  - **Layout do AK820 75%:** Grade física interativa com ~82 teclas e knob rotativo no topo direito.
-  - **Controles de Iluminação:** Modos Estático e Chuva (Rain), paleta rápida de cores puras + botão "Aplicar Cor".
-  - **Abas Integradas:** Sidebar vertical com abas para Teclado AK820, Mouse NearLink e Configurações/Daemon.
-- **Bloqueio/Aguardando:** Nenhum bloqueio. Alinhamento completo (`/grill-with-docs`) concluído para paridade do módulo de iluminação do software oficial.
+  - Janela travada em `980x680` (`min = max`), alinhamento simétrico e tema grafite fosco (`#18181B`) em `JetBrains Mono`.
+  - Seletor completo dos 19 efeitos nativos de firmware + Modo 20 `Custom`, controles dinâmicos de Brilho (`0..4`), Velocidade (`0..4`), Direção (`Fx`), `7-Color`, `Surmount Preset (1..4)`, 3 bancos Custom com pintura/borracha por tecla, `#HEX`, `R/G/B`, swatches rápidos e seletor HSV contínuo em popover sob demanda.
+- **Bloqueio/Aguardando:** Validação visual final pelo usuário na GUI executável; pesquisa futura para streaming seguro de Audio wave (`29`) isolada em standby.
 
 ---
 
@@ -50,12 +46,14 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `be2fad5`: `fix: correct AK820 75% physical keycap alignment, arrow cluster and navigation column`
 - `5ace228`: `fix: embed JetBrains Mono font, fix badge padding and align keyboard and sidebar geometry`
 - `2c8663c`: `feat: implement custom per-key rgb matrix, 25 fps gif player, and native gui controls`
-- `[próximo]`: `chore: disable gif streaming due to hardware flicker and remove gif tab from gui`
+- `112df72`: `chore: disable gif streaming due to hardware flicker and remove gif tab from gui`
+- `5cac230`: `docs: align domain glossary, adr-0002 and lighting parity requirements`
+- `[atual]`: paridade completa do subsistema de iluminação AK820 (19 efeitos + Custom 3 bancos + persistência JSON + GUI travada).
 
 ---
 
 ## 4. Próximos Passos Imediatos
 
-1. Engenharia reversa estática dos payloads completos de `Opcode 0x06` (modos `1..18` e `30`, flag Multicolor, brilho, velocidade, direção, sub-variações) e teste de transação única (`0x01 -> 0x0B -> 0x02`) para o Modo 20 Custom.
-2. Implementar paridade completa do módulo de iluminação no `ajazz-protocol`, `ajazz-daemon` (com persistência de **User Profile** em JSON) e `ajazz-gui` (janela travada, 19 efeitos + Custom 3 bancos).
-3. Engenharia reversa das features de entrada/sistema (Keymap, Macros, Win Lock, Polling Rate), Mouse NearLink e Switch Chattering.
+1. Validação interativa pelo usuário do comportamento dos 19 efeitos e dos 3 bancos Custom na GUI (`ajazz-daemon` + `ajazz-gui`).
+2. Decidir próxima etapa de paridade oficial: Keymap / Macros / SystemStages (`WinLock`, `PollingRate`) ou módulos dedicados (`Mouse NearLink` / `Switch Chattering`).
+3. Investigar em momento oportuno protocolo de áudio em tempo real do modo `audiorecord` (`29`) para entender se há canal volátil seguro diferente de `0x0B`.
