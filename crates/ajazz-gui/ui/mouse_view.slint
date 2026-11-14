@@ -151,7 +151,7 @@ export component MouseView inherits Rectangle {
     in-out property <int> btn-mod-mask: 0;
     in-out property <int> btn-key-idx: 0;
     in-out property <int> btn-media-idx: 0;
-    in-out property <int> btn-sniper-idx: 0;
+    in-out property <int> btn-system-idx: 0;
     in-out property <bool> btn-capturing-key: false;
     in property <bool> btn-left-warning: false;
     in property <[string]> key-catalog-labels: [];
@@ -184,7 +184,7 @@ export component MouseView inherits Rectangle {
     callback btn-catalog-key-selected(int);
     callback btn-capture-key(string, bool, bool, bool, bool);
     callback btn-media-selected(int);
-    callback btn-sniper-selected(int);
+    callback btn-system-selected(int);
     callback apply-button-clicked();
     callback reset-buttons-clicked();
 
@@ -830,7 +830,7 @@ export component MouseView inherits Rectangle {
                         MousePill { text: "Mouse"; pill-width: 82px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
                         MousePill { text: "Teclado"; pill-width: 82px; active: root.btn-category == 1; clicked => { root.btn-category-selected(1); } }
                         MousePill { text: "Mídia"; pill-width: 82px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
-                        MousePill { text: "Sniper DPI"; pill-width: 88px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
+                        MousePill { text: "Sistema"; pill-width: 88px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
                         MousePill { text: "Desabilitar"; pill-width: 82px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
                     }
 
@@ -1046,40 +1046,47 @@ export component MouseView inherits Rectangle {
                             }
                         }
 
-                        // Cat 3: Sniper DPI (40 01|02|04 00 00)
+                        // Cat 3: Sistema ACPI (40 01|02|04 00 00)
                         if (root.btn-category == 3) : VerticalLayout {
                             padding: 16px;
                             spacing: 12px;
                             alignment: start;
 
                             Text {
-                                text: "SNIPER DPI (REDUZ SENSIBILIDADE ENQUANTO SEGURA)";
+                                text: "ATALHOS ACPI DE SISTEMA (CONTROLAM ENERGIA DO PC)";
                                 font-family: Theme.mono-font;
                                 font-size: 9px;
                                 font-weight: 700;
-                                color: Theme.text-muted;
+                                color: Theme.status-warning;
                             }
 
                             MousePill {
-                                text: "Nível 1 (0x01) — Precisão Máxima";
+                                text: "Power (0x40 01) — Desliga / Suspende o PC";
                                 pill-width: 400px;
                                 pill-height: 36px;
-                                active: root.btn-sniper-idx == 0;
-                                clicked => { root.btn-sniper-selected(0); }
+                                active: root.btn-system-idx == 0;
+                                clicked => { root.btn-system-selected(0); }
                             }
                             MousePill {
-                                text: "Nível 2 (0x02) — Precisão Média";
+                                text: "Sleep (0x40 02) — Entra em Suspensão";
                                 pill-width: 400px;
                                 pill-height: 36px;
-                                active: root.btn-sniper-idx == 1;
-                                clicked => { root.btn-sniper-selected(1); }
+                                active: root.btn-system-idx == 1;
+                                clicked => { root.btn-system-selected(1); }
                             }
                             MousePill {
-                                text: "Nível 3 (0x04) — Redução Leve";
+                                text: "Wake Up (0x40 04) — Acorda o PC";
                                 pill-width: 400px;
                                 pill-height: 36px;
-                                active: root.btn-sniper-idx == 2;
-                                clicked => { root.btn-sniper-selected(2); }
+                                active: root.btn-system-idx == 2;
+                                clicked => { root.btn-system-selected(2); }
+                            }
+
+                            Text {
+                                text: "Para trocar DPI no botão sem suspender o PC, use DPI + ou DPI - na aba Mouse.";
+                                font-size: 11px;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
                             }
                         }
 

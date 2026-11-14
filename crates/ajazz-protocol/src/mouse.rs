@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::keymap::SystemKey;
 use crate::{HID_REPORT_PAYLOAD_SIZE, MOUSE_NEARLINK_VID, ProtocolError};
 
 /// PIDs oficiais do mouse AJAZZ AJ179 NL P (`config.xml` / `aj179.xml`).
@@ -238,15 +239,63 @@ pub enum MouseButtonAction {
     DpiMinus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum MouseButtonSlot {
     Disable,
     Mouse(MouseButtonAction),
     Keyboard { modifiers: u8, key1: u8, key2: u8 },
     Media { usage: u16 },
-    SniperDpi { level_mask: u8 },
+    /// Ações ACPI de sistema (`40 <01|02|04> 00 00`: Power/Sleep/Wake via UsagePage 0x01 Usage 0x80).
+    System(SystemKey),
     Macro { index: u8, loop_mode: u8, loop_count: u8 },
     Raw([u8; 4]),
+}
+
+impl<'de> Deserialize<'de> for MouseButtonSlot {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum LegacyOrCurrent {
+            Disable,
+            Mouse(MouseButtonAction),
+            Keyboard { modifiers: u8, key1: u8, key2: u8 },
+            Media { usage: u16 },
+            System(SystemKey),
+            // Perfis antigos gravavam `SniperDpi` que na verdade emitia ACPI Power (0x40 01);
+            // neutralizamos para `Disable` ao carregar para evitar hibernação acidental.
+            SniperDpi {
+                #[serde(rename = "level_mask")]
+                _level_mask: u8,
+            },
+            Macro { index: u8, loop_mode: u8, loop_count: u8 },
+            Raw([u8; 4]),
+        }
+
+        Ok(match LegacyOrCurrent::deserialize(deserializer)? {
+            LegacyOrCurrent::Disable | LegacyOrCurrent::SniperDpi { .. } => Self::Disable,
+            LegacyOrCurrent::Mouse(act) => Self::Mouse(act),
+            LegacyOrCurrent::Keyboard {
+                modifiers,
+                key1,
+                key2,
+            } => Self::Keyboard {
+                modifiers,
+                key1,
+                key2,
+            },
+            LegacyOrCurrent::Media { usage } => Self::Media { usage },
+            LegacyOrCurrent::System(sys) => Self::System(sys),
+            LegacyOrCurrent::Macro {
+                index,
+                loop_mode,
+                loop_count,
+            } => Self::Macro {
+                index,
+                loop_mode,
+                loop_count,
+            },
+            LegacyOrCurrent::Raw(raw) => Self::Raw(raw),
+        })
+    }
 }
 
 impl MouseButtonSlot {
@@ -284,7 +333,7 @@ impl MouseButtonSlot {
                 let [lo, hi] = usage.to_le_bytes();
                 [0x30, lo, hi, 0x00]
             }
-            Self::SniperDpi { level_mask } => [0x40, level_mask, 0x00, 0x00],
+            Self::System(sys) => [0x40, sys as u8, 0x00, 0x00],
             Self::Macro {
                 index,
                 loop_mode,
