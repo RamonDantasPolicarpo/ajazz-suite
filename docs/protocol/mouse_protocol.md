@@ -114,7 +114,10 @@ O pacote de 64 bytes usa cabeçalho de 5 bytes e slots consecutivos de 4 bytes i
     - Scroll Up=`10 00 00 FE`, Scroll Down=`10 00 00 02`, DPI+=`1F 01 00 00`, DPI-=`1F 00 00 00`
   - **Teclado (`2`)**: `20 <mod_bits> <k1> <k2>` (se tecla modificadora única `0xE0..0xE7` sem `mod_bits`, promove bit para `b1` e zera `b2`)
   - **Mídia / Consumer (`4`)**: `30 <usage_u16_le> 00` (ex.: `0x00CD` Play/Pause, `0x00B7` Stop, `0x00B6` Prev, `0x00B5` Next, `0x00E9` Vol+, `0x00EA` Vol-, `0x00E2` Mute, `0x0183` Player, `0x0192` Calc, `0x018A` Mail)
-  - **Atalho / Sniper (`7`, `sub_415a80`)**: `20 <mod_bits> <hid_key> 00` ou Sniper DPI `40 <level: 01|02|04> 00 00`
+  - **Atalho / Sistema ACPI (`7`, `sub_4247b0` + `sub_415a80`)**:
+    - Subcategorias Windows/Escritório: `20 <mod_bits> <hid_key> 00` ou Media `30 <usage_u16_le> 00`
+    - Subcategoria `System management class` (`0x1b`/`0x1c`/`0x1d`): **`40 <01|02|04> 00 00`** = **Sistema ACPI (`SystemKey`: `01=Power`, `02=Sleep`, `04=Wake Up`, HID `UsagePage 0x01 / Usage 0x80`)** — **não é Sniper DPI**.
+    - Nota sobre *Sniper key*: `215=Sniper key` / `216=Set Sniper key` (`0x54`) em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no firmware AJ179; troca de DPI em botão usa `DPI+` (`1F 01 00 00`) ou `DPI-` (`1F 00 00 00`).
   - **Especial (`9, 10, 11`)**: `50 <09|0A|0B> <val> 00`
   - **Macro (`5`)**: `60 <macro_idx> <loop_mode> <loop_count>` (`loop_mode`: `0=N vezes`, `1=até soltar`, `2=até pressionar novamente`)
 

@@ -9,6 +9,9 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - **Mouse AJAZZ AJ179 NL P (`NearLink BS25/BS2X`, `AJAZZ Driver（W1）.exe`):**
   - Política anti-brick e bloqueio de DFU/Bootloader registrada em [ADR-0003](docs/adr/0003-mouse-anti-brick-and-dfu-lockout.md) (`UsagePage 0xFFB1`, `BurnTool.exe`, `libburn.dll` e `06 0F ... FF` estritamente bloqueados).
   - Protocolo HID proprietário documentado em [mouse_protocol.md](docs/protocol/mouse_protocol.md) (`VID 0x7768`, `PID 0x642E` 2.4G / `0x6D2E` USB, `UsagePage 0xFFB2 / Usage 0x01`, reports de 64 bytes) e implementado em `crates/ajazz-protocol/src/mouse.rs` (`Aj179MouseDevice`, `MouseStatus`, `MouseConfig`, `MouseButtonSlot`, `MouseProfile`, validado por leitura real no hardware em 2.4G: FW `1.0.14`, bateria `50%`, 6 estágios DPI).
+  - **Correções pós-validação no Mouse**:
+    - `b690faa`: corrigido bug de polling periódico `MouseStatus` sobrescrevendo rascunhos de botões e DPI na GUI.
+    - Diagnosticado via `diagnosing-bugs` + `Kernel-Power` Event 506 (`Power Button`) + `AJAZZ Driver（W1）.exe` (`sub_4247b0` + `sub_415a80`): `[0x40, 0x01/0x02/0x04, 0x00, 0x00]` são **atalhos ACPI de Sistema (`SystemKey`: Power/Sleep/Wake)** via `UsagePage 0x01 / Usage 0x80`, não Sniper DPI (`215/216` em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no AJ179). `MouseButtonSlot::SniperDpi` substituído por `MouseButtonSlot::System(SystemKey)` (com migração segura de perfis legados `SniperDpi` -> `Disable`) e aba `Sniper DPI` renomeada para `Sistema` com avisos explícitos.
   - **Daemon (`ajazz-daemon`)**: IPC estendido com `GetMouseStatus`, `SetMouseConfig`, `SetMouseButton`, `ResetMouseButtons`, `SyncMouseFromDevice` e `StartMousePairing` (`IpcResponse::MouseStatus`); detecção automática/hot-unplug, aplicação por diff de parâmetros, drenagem de notificações assíncronas `0xFA` e persistência em `UserProfile.mouse`.
   - **Interface Gráfica (`ajazz-gui`)**: Alinhamento concluído via **Grill Me** (2 rodadas) e aba `AJ179 NL P` implementada (`crates/ajazz-gui/ui/mouse_view.slint`, `crates/ajazz-gui/src/mouse_ui.rs`, `sidebar.slint`, `ipc_client.rs`) com telemetria global de bateria/conexão na Sidebar, barra fixa de telemetria, 3 sub-abas (`Performance & Sensor` com 6 estágios DPI/Polling/LOD/Sensor/Debounce, `Botões` com esquema visual dos 5 botões + trava anti-lockout do Clique Esquerdo, `Energia & Conexão` com presets de Sleep/Scroll/Pareamento 2.4G em 2 cliques) e modo rascunho + `Aplicar no Mouse` / `Sincronizar`. Todos os 38 testes do workspace passam.
 
@@ -63,6 +66,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 - `dcacc6d`: `docs: document AJ179 NL P HID protocol and anti-brick ADR`
 - `dbcfe99`: `feat(protocol): implement AJ179 NL P HID codecs and validated status reader`
 - `a4a0590`: `feat(daemon): integrate AJ179 NL P mouse IPC, state sync, and hot-unplug handling`
+- `b690faa`: `fix(gui): prevent periodic MouseStatus polls from resetting button and DPI drafts`
 
 ---
 

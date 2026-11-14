@@ -237,7 +237,7 @@ export component MainWindow inherits Window {
     in-out property <int> ms-btn-mod-mask: 0;
     in-out property <int> ms-btn-key-idx: 0;
     in-out property <int> ms-btn-media-idx: 0;
-    in-out property <int> ms-btn-sniper-idx: 0;
+    in-out property <int> ms-btn-system-idx: 0;
     in-out property <bool> ms-btn-capturing-key: false;
     in-out property <bool> ms-btn-left-warning: false;
     in property <[string]> ms-media-labels: [];
@@ -266,7 +266,7 @@ export component MainWindow inherits Window {
     callback ms-btn-catalog-key-selected(int);
     callback ms-btn-capture-key(string, bool, bool, bool, bool);
     callback ms-btn-media-selected(int);
-    callback ms-btn-sniper-selected(int);
+    callback ms-btn-system-selected(int);
     callback ms-apply-button-clicked();
     callback ms-reset-buttons-clicked();
 
@@ -563,7 +563,7 @@ export component MainWindow inherits Window {
                 btn-mod-mask <=> root.ms-btn-mod-mask;
                 btn-key-idx <=> root.ms-btn-key-idx;
                 btn-media-idx <=> root.ms-btn-media-idx;
-                btn-sniper-idx <=> root.ms-btn-sniper-idx;
+                btn-system-idx <=> root.ms-btn-system-idx;
                 btn-capturing-key <=> root.ms-btn-capturing-key;
                 btn-left-warning: root.ms-btn-left-warning;
                 key-catalog-labels: root.km-key-catalog-labels;
@@ -594,7 +594,7 @@ export component MainWindow inherits Window {
                 btn-catalog-key-selected(i) => { root.ms-btn-catalog-key-selected(i); }
                 btn-capture-key(t, c, s, a, m) => { root.ms-btn-capture-key(t, c, s, a, m); }
                 btn-media-selected(i) => { root.ms-btn-media-selected(i); }
-                btn-sniper-selected(i) => { root.ms-btn-sniper-selected(i); }
+                btn-system-selected(i) => { root.ms-btn-system-selected(i); }
                 apply-button-clicked => { root.ms-apply-button-clicked(); }
                 reset-buttons-clicked => { root.ms-reset-buttons-clicked(); }
             }

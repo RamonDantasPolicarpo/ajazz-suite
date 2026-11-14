@@ -5,7 +5,7 @@ use ajazz_protocol::mouse::{
     MouseConnectionMode, MousePollingRate, MouseProfile, MouseStatus, ScrollDirection,
     MOUSE_BUTTON_COUNT, MOUSE_DEBOUNCE_MAX_MS, MOUSE_DEBOUNCE_MIN_MS, MOUSE_MAX_DPI_STAGES,
 };
-use ajazz_protocol::{MediaKey, HID_KEY_CATALOG};
+use ajazz_protocol::{MediaKey, SystemKey, HID_KEY_CATALOG};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -32,7 +32,6 @@ const SLOT_TITLES: [&str; MOUSE_BUTTON_COUNT] = [
     "[4] LATERAL VOLTAR",
 ];
 
-const SNIPER_LEVELS: [u8; 3] = [0x01, 0x02, 0x04];
 
 pub fn media_labels() -> ModelRc<SharedString> {
     let items: Vec<SharedString> = MediaKey::ALL
@@ -81,11 +80,10 @@ pub fn slot_short_label(slot: &MouseButtonSlot) -> String {
         MouseButtonSlot::Media { usage } => MediaKey::from_usage(*usage)
             .map(|m| m.label().to_string())
             .unwrap_or_else(|| format!("Mídia 0x{usage:04X}")),
-        MouseButtonSlot::SniperDpi { level_mask } => match level_mask {
-            0x01 => "Sniper Nv.1".into(),
-            0x02 => "Sniper Nv.2".into(),
-            0x04 => "Sniper Nv.3".into(),
-            other => format!("Sniper 0x{other:02X}"),
+        MouseButtonSlot::System(sys) => match sys {
+            SystemKey::Power => "Power (ACPI)".into(),
+            SystemKey::Sleep => "Sleep (ACPI)".into(),
+            SystemKey::Wake => "Wake (ACPI)".into(),
         },
         MouseButtonSlot::Macro { index, .. } => format!("Macro #{}", index + 1),
         MouseButtonSlot::Raw(b) => format!("Raw {:02X}{:02X}", b[0], b[1]),
@@ -166,10 +164,8 @@ pub fn draft_button_from_ui(ui: &MainWindow) -> MouseButtonSlot {
             MouseButtonSlot::Media { usage }
         }
         3 => {
-            let idx = (ui.get_ms_btn_sniper_idx().max(0) as usize).min(SNIPER_LEVELS.len() - 1);
-            MouseButtonSlot::SniperDpi {
-                level_mask: SNIPER_LEVELS[idx],
-            }
+            let idx = (ui.get_ms_btn_system_idx().max(0) as usize).min(SystemKey::ALL.len() - 1);
+            MouseButtonSlot::System(SystemKey::ALL[idx])
         }
         _ => MouseButtonSlot::Disable,
     }
@@ -223,13 +219,13 @@ pub fn sync_selected_button_to_ui(
                 .unwrap_or(0);
             ui.set_ms_btn_media_idx(m_idx as i32);
         }
-        MouseButtonSlot::SniperDpi { level_mask } => {
+        MouseButtonSlot::System(sys) => {
             ui.set_ms_btn_category(3);
-            let s_idx = SNIPER_LEVELS
+            let s_idx = SystemKey::ALL
                 .iter()
-                .position(|l| l == level_mask)
+                .position(|k| k == sys)
                 .unwrap_or(0);
-            ui.set_ms_btn_sniper_idx(s_idx as i32);
+            ui.set_ms_btn_system_idx(s_idx as i32);
         }
         MouseButtonSlot::Disable | MouseButtonSlot::Macro { .. } | MouseButtonSlot::Raw(_) => {
             ui.set_ms_btn_category(4);
@@ -732,9 +728,9 @@ pub fn register_mouse_callbacks(
     {
         let ui_w = ui.as_weak();
         let st_c = Arc::clone(state);
-        ui.on_ms_btn_sniper_selected(move |idx| {
+        ui.on_ms_btn_system_selected(move |idx| {
             if let Some(ui) = ui_w.upgrade() {
-                ui.set_ms_btn_sniper_idx(idx);
+                ui.set_ms_btn_system_idx(idx);
                 refresh_button_warning(&st_c, &ui);
             }
         });
@@ -801,7 +797,7 @@ mod tests {
         assert!(!would_lose_left_click(
             &buttons,
             3,
-            &MouseButtonSlot::SniperDpi { level_mask: 0x01 }
+            &MouseButtonSlot::System(SystemKey::Power)
         ));
 
         // Se Slot 1 também tem Clique Esquerdo, liberar Slot 0 é permitido
@@ -833,8 +829,16 @@ mod tests {
 
         // Se outro cliente/reset alterar os botões no daemon, aí sim resincroniza o editor
         let mut updated = st.profile.mouse.clone();
-        updated.buttons[3] = MouseButtonSlot::SniperDpi { level_mask: 0x01 };
+        updated.buttons[3] = MouseButtonSlot::System(SystemKey::Sleep);
         let third = merge_mouse_status(&mut st, true, None, updated);
         assert!(third.sync_buttons);
+    }
+
+    #[test]
+    fn legacy_sniper_dpi_config_deserializes_safely_to_disable() {
+        let migrated: MouseButtonSlot =
+            serde_json::from_str(r#"{"SniperDpi":{"level_mask":1}}"#).unwrap();
+        assert_eq!(migrated, MouseButtonSlot::Disable);
+        assert_eq!(migrated.to_wire(), [0x00, 0x00, 0x00, 0x00]);
     }
 }
