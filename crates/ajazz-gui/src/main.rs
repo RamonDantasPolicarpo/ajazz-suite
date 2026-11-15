@@ -506,6 +506,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             if plan.sync_config {
                                 mouse_ui::sync_config_to_ui(&ui, &plan.draft_cfg, plan.dirty);
+                            } else if let Some(dpi_idx) = plan.sync_dpi_index {
+                                ui.set_ms_dpi_index(dpi_idx);
+                                ui.set_ms_dirty(plan.dirty);
                             }
                         });
                         false
@@ -558,6 +561,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
             apply_status(send_request(IpcRequest::GetMouseStatus).await, &state_ipc, &ui_weak_status, true);
 
+            let mut kb_tick: u8 = 0;
             loop {
                 tokio::select! {
                     Some(req) = rx.recv() => {
@@ -596,8 +600,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
                         }
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(1500)) => {
-                        apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
+                    _ = tokio::time::sleep(Duration::from_millis(300)) => {
+                        kb_tick = (kb_tick + 1) % 5;
+                        if kb_tick == 0 {
+                            apply_status(send_request(IpcRequest::GetStatus).await, &state_ipc, &ui_weak_status, false);
+                        }
                         apply_status(send_request(IpcRequest::GetMouseStatus).await, &state_ipc, &ui_weak_status, true);
                     }
                 }

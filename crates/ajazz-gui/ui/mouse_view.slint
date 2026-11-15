@@ -48,6 +48,7 @@ component MousePill inherits Rectangle {
 
 component MouseSubTab inherits Rectangle {
     in property <string> label;
+    in property <image> icon;
     in property <bool> active: false;
     in property <length> tab-width: 136px;
     callback clicked();
@@ -59,14 +60,28 @@ component MouseSubTab inherits Rectangle {
     border-color: root.active ? Theme.border-light : Theme.border;
     border-width: 1px;
 
-    Text {
-        text: root.label;
-        font-family: Theme.mono-font;
-        font-size: 9px;
-        font-weight: root.active ? 700 : 500;
-        color: root.active ? Theme.text-primary : Theme.text-secondary;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+    HorizontalLayout {
+        spacing: 5px;
+        alignment: center;
+
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 11px;
+                height: 11px;
+                colorize: root.active ? Theme.text-primary : Theme.text-secondary;
+            }
+        }
+
+        Text {
+            text: root.label;
+            font-family: Theme.mono-font;
+            font-size: 9px;
+            font-weight: root.active ? 700 : 500;
+            color: root.active ? Theme.text-primary : Theme.text-secondary;
+            vertical-alignment: center;
+        }
     }
 
     ta := TouchArea {
@@ -74,38 +89,41 @@ component MouseSubTab inherits Rectangle {
     }
 }
 
-component SchematicButton inherits Rectangle {
+component MouseSlotChip inherits Rectangle {
     in property <int> slot-num;
     in property <string> slot-name;
     in property <string> binding-label;
     in property <bool> selected: false;
     callback clicked();
 
+    height: 18px;
     border-radius: Theme.radius-sm;
-    background: root.selected ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised);
-    border-color: root.selected ? Theme.text-primary : Theme.border-light;
-    border-width: root.selected ? 1.5px : 1px;
+    background: root.selected ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface);
+    border-color: root.selected ? Theme.text-primary : Theme.border;
+    border-width: 1px;
 
-    VerticalLayout {
-        alignment: center;
-        spacing: 2px;
-        padding: 4px;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 5px;
+        alignment: space-between;
 
         Text {
             text: "[" + root.slot-num + "] " + root.slot-name;
             font-family: Theme.mono-font;
             font-size: 8px;
             font-weight: 700;
-            color: Theme.text-muted;
-            horizontal-alignment: center;
+            color: root.selected ? Theme.text-primary : Theme.text-muted;
+            vertical-alignment: center;
         }
+
         Text {
             text: root.binding-label;
             font-family: Theme.mono-font;
-            font-size: 9px;
-            font-weight: 700;
+            font-size: 8px;
+            font-weight: 600;
             color: root.selected ? Theme.text-primary : Theme.text-secondary;
-            horizontal-alignment: center;
+            vertical-alignment: center;
             overflow: elide;
         }
     }
@@ -275,6 +293,18 @@ export component MouseView inherits Rectangle {
                         }
                     }
 
+                    if (root.daemon-online && root.ms-connected) : VerticalLayout {
+                        alignment: center;
+                        Image {
+                            source: root.ms-conn-label == "USB WIRED"
+                                ? @image-url("assets/icon_usb.svg")
+                                : @image-url("assets/icon_wireless.svg");
+                            width: 12px;
+                            height: 12px;
+                            colorize: root.ms-online ? Theme.text-primary : Theme.status-warning;
+                        }
+                    }
+
                     Text {
                         text: root.daemon-online ? root.ms-conn-label : "DAEMON OFF";
                         font-family: Theme.mono-font;
@@ -285,7 +315,7 @@ export component MouseView inherits Rectangle {
                     }
 
                     if (root.ms-connected) : HorizontalLayout {
-                        spacing: 6px;
+                        spacing: 5px;
                         alignment: center;
 
                         Text {
@@ -299,33 +329,44 @@ export component MouseView inherits Rectangle {
                         VerticalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 28px;
-                                height: 8px;
-                                border-radius: 2px;
-                                background: Theme.surface-raised;
-                                border-color: Theme.border-light;
-                                border-width: 1px;
+                                width: 22px;
+                                height: 12px;
 
                                 Rectangle {
-                                    x: 1px;
-                                    y: 1px;
-                                    height: 6px;
-                                    width: 26px * (clamp(root.ms-battery-percent, 0, 100) / 100.0);
+                                    x: 2.5px;
+                                    y: 2.5px;
+                                    height: 7px;
+                                    width: 13.5px * (clamp(root.ms-battery-percent, 0, 100) / 100.0);
                                     border-radius: 1px;
                                     background: root.ms-battery-percent > 20 ? Theme.status-online : Theme.status-error;
+                                }
+
+                                Image {
+                                    source: @image-url("assets/icon_battery.svg");
+                                    width: 22px;
+                                    height: 12px;
+                                    colorize: Theme.border-light;
                                 }
                             }
                         }
 
                         Text {
-                            text: root.ms-charging
-                                ? root.ms-battery-percent + "% (CARREG.)"
-                                : root.ms-battery-percent + "%";
+                            text: root.ms-battery-percent + "%";
                             font-family: Theme.mono-font;
                             font-size: 9px;
                             font-weight: 700;
                             color: Theme.text-primary;
                             vertical-alignment: center;
+                        }
+
+                        if (root.ms-charging) : VerticalLayout {
+                            alignment: center;
+                            Image {
+                                source: @image-url("assets/icon_lightning.svg");
+                                width: 12px;
+                                height: 12px;
+                                colorize: Theme.status-warning;
+                            }
                         }
                     }
 
@@ -362,12 +403,31 @@ export component MouseView inherits Rectangle {
 
             HorizontalLayout {
                 spacing: 4px;
-                MouseSubTab { label: "PERFORMANCE"; tab-width: 112px; active: root.subtab == 0; clicked => { root.subtab = 0; } }
-                MouseSubTab { label: "BOTÕES (5)"; tab-width: 86px; active: root.subtab == 1; clicked => { root.subtab = 1; } }
-                MouseSubTab { label: "ENERGIA & 2.4G"; tab-width: 110px; active: root.subtab == 2; clicked => { root.subtab = 2; } }
+                MouseSubTab {
+                    label: "PERFORMANCE";
+                    icon: @image-url("assets/icon_perf.svg");
+                    tab-width: 118px;
+                    active: root.subtab == 0;
+                    clicked => { root.subtab = 0; }
+                }
+                MouseSubTab {
+                    label: "BOTÕES (5)";
+                    icon: @image-url("assets/icon_buttons.svg");
+                    tab-width: 96px;
+                    active: root.subtab == 1;
+                    clicked => { root.subtab = 1; }
+                }
+                MouseSubTab {
+                    label: "ENERGIA & 2.4G";
+                    icon: @image-url("assets/icon_power.svg");
+                    tab-width: 120px;
+                    active: root.subtab == 2;
+                    clicked => { root.subtab = 2; }
+                }
                 MouseSubTab {
                     label: root.chatter-total > 0 ? "DIAGNÓSTICO (" + root.chatter-total + ")" : "DIAGNÓSTICO";
-                    tab-width: 122px;
+                    icon: @image-url("assets/icon_diag.svg");
+                    tab-width: 130px;
                     active: root.subtab == 3;
                     clicked => { root.subtab = 3; }
                 }
@@ -446,26 +506,72 @@ export component MouseView inherits Rectangle {
                         spacing: 8px;
                         opacity: idx < root.dpi-count ? 1.0 : 0.35;
 
-                        // Botão seletor de estágio ativo
-                        MousePill {
-                            text: "S" + (idx + 1);
-                            pill-width: 42px;
-                            pill-height: 24px;
-                            enabled: idx < root.dpi-count;
-                            active: root.dpi-index == idx;
-                            highlight: root.dpi-index == idx;
-                            clicked => { root.dpi-stage-selected(idx); }
+                        property <color> stage-color: idx == 0 ? #EF4444
+                            : (idx == 1 ? #22C55E
+                            : (idx == 2 ? #3B82F6
+                            : (idx == 3 ? #06B6D4
+                            : (idx == 4 ? #EAB308 : #EC4899))));
+                        property <bool> is-active: root.dpi-index == idx;
+
+                        // Botão seletor de estágio ativo com bolinha colorida fixa + ponto branco no ativo
+                        Rectangle {
+                            width: 52px;
+                            height: 24px;
+                            border-radius: Theme.radius-sm;
+                            background: is-active
+                                ? #1F3A2A
+                                : (ta-stage.has-hover ? Theme.surface-hover : Theme.surface-raised);
+                            border-color: is-active ? Theme.status-online : Theme.border;
+                            border-width: 1px;
+
+                            HorizontalLayout {
+                                spacing: 5px;
+                                alignment: center;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 10px;
+                                        height: 10px;
+                                        border-radius: 5px;
+                                        background: stage-color;
+
+                                        if (is-active) : Rectangle {
+                                            width: 4px;
+                                            height: 4px;
+                                            x: 3px;
+                                            y: 3px;
+                                            border-radius: 2px;
+                                            background: #FFFFFF;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: "S" + (idx + 1);
+                                    font-family: Theme.mono-font;
+                                    font-size: 9px;
+                                    font-weight: is-active ? 700 : 500;
+                                    color: is-active ? Theme.status-online : Theme.text-secondary;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            ta-stage := TouchArea {
+                                enabled: idx < root.dpi-count;
+                                clicked => { root.dpi-stage-selected(idx); }
+                            }
                         }
 
                         // Barra visual do nível de DPI
                         VerticalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 320px;
+                                width: 310px;
                                 height: 10px;
                                 border-radius: 3px;
                                 background: Theme.background;
-                                border-color: root.dpi-index == idx ? Theme.border-light : Theme.border;
+                                border-color: is-active ? Theme.border-light : Theme.border;
                                 border-width: 1px;
 
                                 property <int> cur-dpi: idx < root.dpi-values.length ? root.dpi-values[idx] : 800;
@@ -474,9 +580,9 @@ export component MouseView inherits Rectangle {
                                     x: 1px;
                                     y: 1px;
                                     height: 8px;
-                                    width: 318px * clamp((cur-dpi * 1.0) / 26000.0, 0.02, 1.0);
+                                    width: 308px * clamp((cur-dpi * 1.0) / 26000.0, 0.02, 1.0);
                                     border-radius: 2px;
-                                    background: root.dpi-index == idx ? Theme.status-online : Theme.text-secondary;
+                                    background: is-active ? Theme.status-online : Theme.text-secondary;
                                 }
                             }
                         }
@@ -502,7 +608,7 @@ export component MouseView inherits Rectangle {
                             height: 22px;
                             border-radius: Theme.radius-sm;
                             background: Theme.background;
-                            border-color: root.dpi-index == idx ? Theme.border-light : Theme.border;
+                            border-color: is-active ? Theme.border-light : Theme.border;
                             border-width: 1px;
 
                             TextInput {
@@ -537,11 +643,11 @@ export component MouseView inherits Rectangle {
                         }
 
                         Text {
-                            text: root.dpi-index == idx ? "ATIVO" : (idx < root.dpi-count ? "" : "INATIVO");
+                            text: is-active ? "ATIVO" : (idx < root.dpi-count ? "" : "INATIVO");
                             font-family: Theme.mono-font;
                             font-size: 8px;
                             font-weight: 700;
-                            color: root.dpi-index == idx ? Theme.status-online : Theme.text-muted;
+                            color: is-active ? Theme.status-online : Theme.text-muted;
                             vertical-alignment: center;
                         }
                     }
@@ -711,7 +817,7 @@ export component MouseView inherits Rectangle {
 
                 VerticalLayout {
                     padding: 12px;
-                    spacing: 10px;
+                    spacing: 8px;
 
                     Text {
                         text: "ESQUEMA FÍSICO (5 BOTÕES)";
@@ -722,86 +828,308 @@ export component MouseView inherits Rectangle {
                         horizontal-alignment: center;
                     }
 
-                    // Silhueta interativa do AJ179
+                    // Silhueta vetorial interativa do AJ179 (vistas superior + lateral)
                     Rectangle {
                         width: 224px;
-                        height: 422px;
-                        border-radius: 56px;
+                        height: 438px;
+                        border-radius: Theme.radius-md;
                         background: Theme.background;
-                        border-color: Theme.border-light;
-                        border-width: 1.5px;
+                        border-color: Theme.border;
+                        border-width: 1px;
 
-                        // [0] Botão Esquerdo
-                        SchematicButton {
-                            x: 16px;
-                            y: 20px;
-                            width: 92px;
-                            height: 112px;
-                            slot-num: 0;
-                            slot-name: "ESQ";
-                            binding-label: root.button-labels.length > 0 ? root.button-labels[0] : "Clique Esq.";
-                            selected: root.selected-slot == 0;
-                            clicked => { root.slot-selected(0); }
+                        // Vista Superior (shape_mouse_cima.svg - viewBox 0 0 326 589)
+                        Rectangle {
+                            x: 42px;
+                            y: 6px;
+                            width: 140px;
+                            height: 253px;
+
+                            // Corpo completo
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 326;
+                                viewbox-height: 589;
+                                fill: #141418;
+                                stroke: Theme.border-light;
+                                stroke-width: 1.4px;
+                                commands: "M136.884 8.798 C128.151 8.305 96.561 13.451 82.503 18.045 C38.697 32.36 19.837 59.033 14.93 113.622 C12.142 144.631 15.014 249.765 18.723 252.477 C20.824 254.013 21.093 262.636 19.062 263.313 C18 263.667 17.748 270.949 17.982 294.582 L18.288 325.389 L13.156 352.912 C0.535 420.594 1.867 446.548 20.132 488.848 C45.932 548.6 89.032 576.373 142.339 579.761 C220.989 584.761 280.404 550.067 305.786 481.546 C319.418 444.745 325.604 388.018 317.144 309.661 C316.544 304.1 315.255 291.714 314.279 282.136 C313.304 272.559 312.183 263.713 311.786 262.477 C311.39 261.242 310.72 226.611 310.299 185.522 C309.438 101.632 308.805 94.261 300.882 75.762 C288.452 46.74 277.073 35.794 247.94 24.838 C230.288 18.199 190.645 10.762 185.44 10.922 C179.491 11.105 173.54 12.347 167.616 13.022 C162.221 13.654 158.51 13.406 153.411 12.073 C148.323 11.604 141.723 9.287 136.884 8.798 Z";
+                            }
+
+                            // [0] Botão Esquerdo
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 326;
+                                viewbox-height: 589;
+                                fill: root.selected-slot == 0 ? Theme.surface-active : (ta-btn0.has-hover ? Theme.surface-hover : Theme.surface);
+                                stroke: root.selected-slot == 0 ? Theme.text-primary : (ta-btn0.has-hover ? Theme.text-secondary : Theme.border-light);
+                                stroke-width: root.selected-slot == 0 ? 1.8px : 1.2px;
+                                commands: "M33.869 63.54 C44.958 46.023 73.973 15.833 142.339 15.51 L142.339 199.253 C142.339 199.253 145.767 213.485 162.928 214.311 C163.317 214.33 163.699 214.342 164.075 214.348 L164.075 273.914 C163.371 273.9 163 273.889 163 273.889 C163 273.889 48.972 275.264 37.585 249.075 C26.199 222.886 27.793 195.33 27.793 195.33 L27.793 89.443 C27.793 78.792 29.9 69.81 33.869 63.54 Z";
+                            }
+
+                            // [1] Botão Direito
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 326;
+                                viewbox-height: 589;
+                                fill: root.selected-slot == 1 ? Theme.surface-active : (ta-btn1.has-hover ? Theme.surface-hover : Theme.surface);
+                                stroke: root.selected-slot == 1 ? Theme.text-primary : (ta-btn1.has-hover ? Theme.text-secondary : Theme.border-light);
+                                stroke-width: root.selected-slot == 1 ? 1.8px : 1.2px;
+                                commands: "M185.44 199.253 L185.44 17.01 C249.168 22.689 278.089 47.545 290.963 67.294 C297.436 77.224 300.882 93.73 300.882 114.803 L300.882 195.33 C300.882 195.33 302.459 248.837 282.73 257.958 C245.941 274.967 173.725 274.109 164.075 273.914 L164.075 214.348 C183.028 214.657 185.44 199.253 185.44 199.253 Z";
+                            }
+
+                            // [2] Scroll / Botão do Meio
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 326;
+                                viewbox-height: 589;
+                                fill: root.selected-slot == 2 ? Theme.surface-active : (ta-btn2.has-hover ? Theme.surface-hover : Theme.surface-raised);
+                                stroke: root.selected-slot == 2 ? Theme.text-primary : (ta-btn2.has-hover ? Theme.text-secondary : Theme.border-light);
+                                stroke-width: root.selected-slot == 2 ? 1.8px : 1.2px;
+                                commands: "M158.066 56.634 L170.022 56.634 C175.481 56.634 179.906 61.059 179.906 66.518 L179.906 146.615 C179.906 152.074 175.481 156.499 170.022 156.499 L158.066 156.499 C152.607 156.499 148.182 152.074 148.182 146.615 L148.182 66.518 C148.182 61.059 152.607 56.634 158.066 56.634 Z";
+                            }
+
+                            // Rótulos internos de [0] ESQ e [1] DIR
+                            VerticalLayout {
+                                x: 14px;
+                                y: 58px;
+                                width: 46px;
+                                spacing: 2px;
+
+                                Text {
+                                    text: "[0] ESQ";
+                                    font-family: Theme.mono-font;
+                                    font-size: 7px;
+                                    font-weight: 700;
+                                    color: root.selected-slot == 0 ? Theme.text-primary : Theme.text-muted;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.button-labels.length > 0 ? root.button-labels[0] : "Clique Esq.";
+                                    font-family: Theme.mono-font;
+                                    font-size: 7px;
+                                    font-weight: 600;
+                                    color: root.selected-slot == 0 ? Theme.text-primary : Theme.text-secondary;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            VerticalLayout {
+                                x: 80px;
+                                y: 58px;
+                                width: 46px;
+                                spacing: 2px;
+
+                                Text {
+                                    text: "[1] DIR";
+                                    font-family: Theme.mono-font;
+                                    font-size: 7px;
+                                    font-weight: 700;
+                                    color: root.selected-slot == 1 ? Theme.text-primary : Theme.text-muted;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.button-labels.length > 1 ? root.button-labels[1] : "Clique Dir.";
+                                    font-family: Theme.mono-font;
+                                    font-size: 7px;
+                                    font-weight: 600;
+                                    color: root.selected-slot == 1 ? Theme.text-primary : Theme.text-secondary;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            // Indicador [2] no Scroll
+                            Text {
+                                x: 60px;
+                                y: 40px;
+                                width: 20px;
+                                text: "2";
+                                font-family: Theme.mono-font;
+                                font-size: 8px;
+                                font-weight: 700;
+                                color: root.selected-slot == 2 ? Theme.text-primary : Theme.text-secondary;
+                                horizontal-alignment: center;
+                            }
+
+                            // Marca sutil no dorso do mouse
+                            Text {
+                                x: 20px;
+                                y: 186px;
+                                width: 100px;
+                                text: "AJ179 NL P";
+                                font-family: Theme.mono-font;
+                                font-size: 7px;
+                                font-weight: 700;
+                                color: Theme.text-muted;
+                                horizontal-alignment: center;
+                            }
+
+                            // Áreas clicáveis (Scroll declarado depois para prioridade sobre ESQ/DIR)
+                            ta-btn0 := TouchArea {
+                                x: 10px;
+                                y: 6px;
+                                width: 60px;
+                                height: 112px;
+                                clicked => { root.slot-selected(0); }
+                            }
+
+                            ta-btn1 := TouchArea {
+                                x: 70px;
+                                y: 6px;
+                                width: 60px;
+                                height: 112px;
+                                clicked => { root.slot-selected(1); }
+                            }
+
+                            ta-btn2 := TouchArea {
+                                x: 59px;
+                                y: 20px;
+                                width: 22px;
+                                height: 50px;
+                                clicked => { root.slot-selected(2); }
+                            }
                         }
 
-                        // [1] Botão Direito
-                        SchematicButton {
-                            x: 116px;
-                            y: 20px;
-                            width: 92px;
-                            height: 112px;
-                            slot-num: 1;
-                            slot-name: "DIR";
-                            binding-label: root.button-labels.length > 1 ? root.button-labels[1] : "Clique Dir.";
-                            selected: root.selected-slot == 1;
-                            clicked => { root.slot-selected(1); }
+                        // Vista Lateral (shape_mouse_lado.svg - viewBox 0 0 589 206)
+                        Rectangle {
+                            x: 5px;
+                            y: 266px;
+                            width: 214px;
+                            height: 75px;
+
+                            // Corpo lateral
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 589;
+                                viewbox-height: 206;
+                                fill: #141418;
+                                stroke: Theme.border-light;
+                                stroke-width: 1.3px;
+                                commands: "M306.433 4.771 C257.406 4.336 206.502 14.544 161.148 35.38 C154.197 38.572 150.208 39.978 147.134 40.172 C135.636 36.854 122.794 37.41 110.889 41.742 C92.528 48.481 78.799 63.301 75.078 80.405 C72.81 82.981 68.387 86.459 60.585 91.728 C43.911 102.987 25.907 115.663 23.462 117.866 C17.872 122.906 12.214 136.537 15.03 138.182 C15.957 138.723 16.134 139.914 15.647 142.35 C15.102 145.079 15.121 146.636 16.934 150.392 C19.363 155.423 24.866 162.602 28.627 166.735 L53.082 193.622 C57.497 198.476 63.753 201.243 70.314 201.242 L555.957 201.242 C564.164 199.306 572.878 196.131 574.032 193.425 C579.849 179.774 546.795 135.649 544.181 132.192 C513.073 91.058 483.334 62.615 440.472 38.012 C402.615 16.282 355.461 5.205 306.433 4.771 Z";
+                            }
+
+                            // [3] Lateral Avançar (dianteiro, x=163..250)
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 589;
+                                viewbox-height: 206;
+                                fill: root.selected-slot == 3 ? Theme.surface-active : (ta-btn3.has-hover ? Theme.surface-hover : Theme.surface);
+                                stroke: root.selected-slot == 3 ? Theme.text-primary : (ta-btn3.has-hover ? Theme.text-secondary : Theme.border-light);
+                                stroke-width: root.selected-slot == 3 ? 1.8px : 1.2px;
+                                commands: "M167.552 77.286 C185.618 67.818 209.641 61.046 239.703 58.107 C245.169 57.572 249.925 61.677 249.925 66.929 L249.925 78.84 C249.925 83.498 246.136 87.421 241.12 87.956 C223.619 89.823 208.882 93.227 195.842 97.96 C185.744 101.624 174.665 99.334 168.159 92.236 L165.565 89.406 C162.025 85.544 162.986 79.678 167.552 77.286 Z";
+                            }
+
+                            // [4] Lateral Voltar (traseiro, x=261..349)
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-x: 0;
+                                viewbox-y: 0;
+                                viewbox-width: 589;
+                                viewbox-height: 206;
+                                fill: root.selected-slot == 4 ? Theme.surface-active : (ta-btn4.has-hover ? Theme.surface-hover : Theme.surface);
+                                stroke: root.selected-slot == 4 ? Theme.text-primary : (ta-btn4.has-hover ? Theme.text-secondary : Theme.border-light);
+                                stroke-width: root.selected-slot == 4 ? 1.8px : 1.2px;
+                                commands: "M267.365 55.233 C270.162 55.162 272.982 55.126 275.822 55.126 C301.871 55.126 324.188 57.863 344.4 63.047 C349.011 64.23 350.58 70.003 347.236 73.483 L340.174 80.834 C334.331 86.915 325.533 89.636 316.706 88.091 C303.602 85.798 290.071 84.7 274.336 84.7 C271.981 84.7 269.642 84.729 267.319 84.787 C263.794 84.876 260.914 82.023 261.009 78.537 L261.485 61.153 C261.573 57.916 264.157 55.314 267.365 55.233 Z";
+                            }
+
+                            Text {
+                                x: 65px;
+                                y: 6px;
+                                width: 20px;
+                                text: "[3]";
+                                font-family: Theme.mono-font;
+                                font-size: 7px;
+                                font-weight: 700;
+                                color: root.selected-slot == 3 ? Theme.text-primary : Theme.text-muted;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                x: 101px;
+                                y: 4px;
+                                width: 20px;
+                                text: "[4]";
+                                font-family: Theme.mono-font;
+                                font-size: 7px;
+                                font-weight: 700;
+                                color: root.selected-slot == 4 ? Theme.text-primary : Theme.text-muted;
+                                horizontal-alignment: center;
+                            }
+
+                            ta-btn3 := TouchArea {
+                                x: 56px;
+                                y: 15px;
+                                width: 37px;
+                                height: 26px;
+                                clicked => { root.slot-selected(3); }
+                            }
+
+                            ta-btn4 := TouchArea {
+                                x: 94px;
+                                y: 15px;
+                                width: 37px;
+                                height: 26px;
+                                clicked => { root.slot-selected(4); }
+                            }
                         }
 
-                        // [2] Botão do Meio (Scroll)
-                        SchematicButton {
-                            x: 74px;
-                            y: 142px;
-                            width: 76px;
-                            height: 58px;
-                            slot-num: 2;
-                            slot-name: "SCROLL";
-                            binding-label: root.button-labels.length > 2 ? root.button-labels[2] : "Botão Meio";
-                            selected: root.selected-slot == 2;
-                            clicked => { root.slot-selected(2); }
-                        }
-
-                        // [3] Lateral Avançar (Frente)
-                        SchematicButton {
+                        // Chips com ação atual dos botões compactos ([2] Scroll, [3] Avançar, [4] Voltar)
+                        VerticalLayout {
                             x: 10px;
-                            y: 214px;
-                            width: 118px;
-                            height: 56px;
-                            slot-num: 3;
-                            slot-name: "AVANÇAR";
-                            binding-label: root.button-labels.length > 3 ? root.button-labels[3] : "Avançar";
-                            selected: root.selected-slot == 3;
-                            clicked => { root.slot-selected(3); }
+                            y: 348px;
+                            width: 204px;
+                            spacing: 4px;
+
+                            MouseSlotChip {
+                                slot-num: 2;
+                                slot-name: "SCROLL";
+                                binding-label: root.button-labels.length > 2 ? root.button-labels[2] : "Botão Meio";
+                                selected: root.selected-slot == 2;
+                                clicked => { root.slot-selected(2); }
+                            }
+
+                            MouseSlotChip {
+                                slot-num: 3;
+                                slot-name: "AVANÇAR";
+                                binding-label: root.button-labels.length > 3 ? root.button-labels[3] : "Avançar";
+                                selected: root.selected-slot == 3;
+                                clicked => { root.slot-selected(3); }
+                            }
+
+                            MouseSlotChip {
+                                slot-num: 4;
+                                slot-name: "VOLTAR";
+                                binding-label: root.button-labels.length > 4 ? root.button-labels[4] : "Voltar";
+                                selected: root.selected-slot == 4;
+                                clicked => { root.slot-selected(4); }
+                            }
                         }
 
-                        // [4] Lateral Voltar (Trás)
-                        SchematicButton {
-                            x: 10px;
-                            y: 278px;
-                            width: 118px;
-                            height: 56px;
-                            slot-num: 4;
-                            slot-name: "VOLTAR";
-                            binding-label: root.button-labels.length > 4 ? root.button-labels[4] : "Voltar";
-                            selected: root.selected-slot == 4;
-                            clicked => { root.slot-selected(4); }
-                        }
-
-                        // Marcação do Sensor na base do corpo
                         Text {
                             x: 0px;
-                            y: 368px;
+                            y: 418px;
                             width: 224px;
-                            text: "AJAZZ AJ179 NL P\nPAW3395 / NearLink";
+                            text: "PAW3395 • NearLink 2.4G";
                             font-family: Theme.mono-font;
                             font-size: 8px;
                             color: Theme.text-muted;
