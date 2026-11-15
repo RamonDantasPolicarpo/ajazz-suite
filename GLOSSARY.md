@@ -13,8 +13,12 @@ A aplicação gráfica interativa executada sob demanda pelo usuário para confi
 _Avoid_: Frontend, painel, client app.
 
 **Switch Chattering**:
-O defeito de contato mecânico/elétrico em que um switch registra múltiplos acionamentos elétricos espúrios em um intervalo temporal anormalmente curto.
+O defeito de contato mecânico/elétrico em que um switch (de tecla ou botão) registra múltiplos acionamentos elétricos espúrios em um intervalo temporal anormalmente curto.
 _Avoid_: Double click, tecla fantasma, repetição acidental.
+
+**Stuck Input**:
+A condição em que o sistema operacional mantém uma entrada logicamente pressionada após a soltura física do switch, geralmente causada pela perda do HID Report de liberação ou travamento mecânico do contato.
+_Avoid_: Botão preso, clique travado, tecla agarrada.
 
 **Key Matrix Frame**:
 A representação bidimensional espacial de cores RGB mapeada diretamente sobre as coordenadas físicas das teclas do periférico para exibição de animações e efeitos.

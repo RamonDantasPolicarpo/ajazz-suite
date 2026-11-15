@@ -396,7 +396,7 @@ pub struct SwitchChatteringButtonStats {
     pub min_interval_ms: Option<u32>,
 }
 
-/// Snapshot instantâneo da telemetria de **Switch Chattering** mantida pelo Daemon.
+/// Snapshot instantâneo da telemetria de **Switch Chattering** e **Stuck Input** mantida pelo Daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SwitchChatteringSnapshot {
     pub enabled: bool,
@@ -405,6 +405,16 @@ pub struct SwitchChatteringSnapshot {
     pub last_chatter_button: Option<MouseButton>,
     pub last_chatter_interval_ms: Option<u32>,
     pub per_button: [SwitchChatteringButtonStats; MOUSE_BUTTON_COUNT],
+    #[serde(default)]
+    pub stuck_count: u64,
+    #[serde(default)]
+    pub last_stuck_button: Option<MouseButton>,
+    #[serde(default)]
+    pub last_stuck_battery: Option<u8>,
+    #[serde(default)]
+    pub last_stuck_hold_ms: Option<u32>,
+    #[serde(default)]
+    pub last_stuck_missed_up: bool,
 }
 
 impl Default for SwitchChatteringSnapshot {
@@ -422,6 +432,11 @@ impl Default for SwitchChatteringSnapshot {
                 last_interval_ms: None,
                 min_interval_ms: None,
             }),
+            stuck_count: 0,
+            last_stuck_button: None,
+            last_stuck_battery: None,
+            last_stuck_hold_ms: None,
+            last_stuck_missed_up: false,
         }
     }
 }

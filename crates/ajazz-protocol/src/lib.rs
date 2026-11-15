@@ -478,6 +478,69 @@ impl Default for LightingConfig {
     }
 }
 
+/// Configuração persistente do monitor passivo de **Switch Chattering** do teclado.
+/// Inicia desativado por padrão para que o usuário ative somente durante sessões de teste/digitação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct KeyboardChatteringConfig {
+    pub enabled: bool,
+    pub threshold_ms: u16,
+}
+
+impl Default for KeyboardChatteringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold_ms: CHATTERING_DEFAULT_THRESHOLD_MS,
+        }
+    }
+}
+
+impl KeyboardChatteringConfig {
+    pub fn normalize(&mut self) {
+        self.threshold_ms = self
+            .threshold_ms
+            .clamp(CHATTERING_THRESHOLD_MIN_MS, CHATTERING_THRESHOLD_MAX_MS);
+    }
+}
+
+/// Métricas acumuladas de **Switch Chattering** por tecla física no teclado.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeyboardChatteringKeyStats {
+    pub label: String,
+    pub vkey: u16,
+    pub make_code: u16,
+    pub total_presses: u64,
+    pub chatter_count: u64,
+    pub last_interval_ms: Option<u32>,
+    pub min_interval_ms: Option<u32>,
+}
+
+/// Snapshot instantâneo da telemetria de **Switch Chattering** do teclado mantida pelo Daemon.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct KeyboardChatteringSnapshot {
+    pub enabled: bool,
+    pub threshold_ms: u16,
+    pub total_chatter_events: u64,
+    pub last_chatter_key: Option<String>,
+    pub last_chatter_interval_ms: Option<u32>,
+    pub keys: Vec<KeyboardChatteringKeyStats>,
+}
+
+impl Default for KeyboardChatteringSnapshot {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold_ms: CHATTERING_DEFAULT_THRESHOLD_MS,
+            total_chatter_events: 0,
+            last_chatter_key: None,
+            last_chatter_interval_ms: None,
+            keys: Vec::new(),
+        }
+    }
+}
+
 /// Perfil do usuário persistido pelo Daemon (`User Profile`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UserProfile {
@@ -496,6 +559,9 @@ pub struct UserProfile {
     /// Perfil persistido do mouse AJ179 NL P.
     #[serde(default)]
     pub mouse: MouseProfile,
+    /// Configuração do monitor passivo de **Switch Chattering** nas teclas do teclado.
+    #[serde(default)]
+    pub keyboard_chattering: KeyboardChatteringConfig,
 }
 
 impl Default for UserProfile {
@@ -508,6 +574,7 @@ impl Default for UserProfile {
             keymap: BTreeMap::new(),
             macros: Vec::new(),
             mouse: MouseProfile::default(),
+            keyboard_chattering: KeyboardChatteringConfig::default(),
         }
     }
 }
@@ -517,6 +584,8 @@ impl UserProfile {
     pub fn normalize(&mut self) {
         self.lighting.normalize();
         self.mouse.config.normalize();
+        self.mouse.chattering.normalize();
+        self.keyboard_chattering.normalize();
         for bank in &mut self.custom_banks {
             bank.resize(TOTAL_PHYSICAL_LEDS, RgbColor::default());
         }

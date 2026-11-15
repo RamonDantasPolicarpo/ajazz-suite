@@ -1,7 +1,7 @@
 use ajazz_protocol::{
-    ChatteringConfig, GifCrop, KeyAssignment, LightingConfig, MacroDefinition, MouseButtonSlot,
-    MouseConfig, MouseProfile, MouseStatus, RgbColor, SwitchChatteringSnapshot, SystemStages,
-    UserProfile,
+    ChatteringConfig, GifCrop, KeyAssignment, KeyboardChatteringConfig, KeyboardChatteringSnapshot,
+    LightingConfig, MacroDefinition, MouseButtonSlot, MouseConfig, MouseProfile, MouseStatus,
+    RgbColor, SwitchChatteringSnapshot, SystemStages, UserProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +66,13 @@ pub enum IpcRequest {
         config: ChatteringConfig,
     },
     ResetChatteringStats,
+    SetKeyboardChatteringConfig {
+        config: KeyboardChatteringConfig,
+    },
+    ResetKeyboardChatteringStats,
+    SetAutostart {
+        enabled: bool,
+    },
 }
 
 /// Respostas enviadas de volta ao cliente pelo Daemon.
@@ -83,6 +90,10 @@ pub enum IpcResponse {
         device_name: String,
         profile: UserProfile,
         is_playing_gif: bool,
+        #[serde(default)]
+        keyboard_chattering: KeyboardChatteringSnapshot,
+        #[serde(default)]
+        autostart_enabled: bool,
     },
     MouseStatus {
         mouse_connected: bool,
