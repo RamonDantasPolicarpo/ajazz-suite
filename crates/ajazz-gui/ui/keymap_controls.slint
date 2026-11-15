@@ -105,12 +105,14 @@ export component KeymapControls inherits Rectangle {
                 }
 
                 Text {
+                    max-width: 240px;
                     text: root.current-binding-label;
                     font-family: Theme.mono-font;
                     font-size: 10px;
                     font-weight: 600;
                     color: root.is-selected-remapped ? Theme.status-online : Theme.text-secondary;
                     vertical-alignment: center;
+                    overflow: elide;
                 }
             }
 
@@ -263,13 +265,17 @@ export component KeymapControls inherits Rectangle {
                                 border-width: 1px;
 
                                 Text {
+                                    width: parent.width - 8px;
                                     text: flat-idx < root.key-catalog-labels.length ? root.key-catalog-labels[flat-idx] : "";
                                     font-family: Theme.mono-font;
                                     font-size: 9px;
                                     font-weight: root.draft-key-idx == flat-idx ? 700 : 500;
                                     color: root.draft-key-idx == flat-idx ? Theme.text-primary : Theme.text-secondary;
-                                    x: (parent.width - self.width) / 2;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    x: 4px;
                                     y: (parent.height - self.height) / 2;
+                                    overflow: elide;
                                 }
 
                                 k-ta := TouchArea {
@@ -341,13 +347,17 @@ export component KeymapControls inherits Rectangle {
                                 border-width: 1px;
 
                                 Text {
+                                    width: parent.width - 10px;
                                     text: e-idx < root.extra-action-labels.length ? root.extra-action-labels[e-idx] : "";
                                     font-family: Theme.mono-font;
                                     font-size: 9px;
                                     font-weight: root.draft-extra-idx == e-idx ? 700 : 500;
                                     color: root.draft-extra-idx == e-idx ? Theme.text-primary : Theme.text-secondary;
-                                    x: (parent.width - self.width) / 2;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    x: 5px;
                                     y: (parent.height - self.height) / 2;
+                                    overflow: elide;
                                 }
 
                                 ex-ta := TouchArea {
@@ -398,13 +408,17 @@ export component KeymapControls inherits Rectangle {
                                     border-width: 1px;
 
                                     Text {
+                                        width: parent.width - 10px;
                                         text: idx < root.macro-names.length ? root.macro-names[idx] : "";
                                         font-family: Theme.mono-font;
                                         font-size: 9px;
                                         font-weight: root.draft-macro-idx == idx ? 700 : 500;
                                         color: Theme.text-primary;
-                                        x: (parent.width - self.width) / 2;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        x: 5px;
                                         y: (parent.height - self.height) / 2;
+                                        overflow: elide;
                                     }
 
                                     TouchArea {

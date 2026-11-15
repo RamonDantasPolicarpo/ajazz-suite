@@ -48,8 +48,8 @@ export component SystemControls inherits Rectangle {
     border-width: 1px;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
+        padding: 14px;
+        spacing: 8px;
         alignment: start;
 
         Text {
@@ -65,7 +65,7 @@ export component SystemControls inherits Rectangle {
             spacing: 12px;
 
             Rectangle {
-                width: 338px;
+                width: 340px;
                 height: 76px;
                 background: Theme.surface-raised;
                 border-radius: Theme.radius-md;
@@ -97,7 +97,7 @@ export component SystemControls inherits Rectangle {
             }
 
             Rectangle {
-                width: 338px;
+                width: 340px;
                 height: 76px;
                 background: Theme.surface-raised;
                 border-radius: Theme.radius-md;
@@ -131,7 +131,7 @@ export component SystemControls inherits Rectangle {
 
         // Alerta visual quando WASD <-> Setas estiver ligado
         if (root.wasd-swap) : Rectangle {
-            height: 28px;
+            height: 24px;
             background: #3B3219;
             border-radius: Theme.radius-sm;
             border-color: Theme.status-warning;
@@ -150,15 +150,15 @@ export component SystemControls inherits Rectangle {
 
         // Polling Rate USB
         Rectangle {
-            height: 68px;
+            height: 64px;
             background: Theme.surface-raised;
             border-radius: Theme.radius-md;
             border-color: Theme.border;
             border-width: 1px;
 
             VerticalLayout {
-                padding: 12px;
-                spacing: 8px;
+                padding: 10px;
+                spacing: 6px;
 
                 HorizontalLayout {
                     alignment: space-between;
@@ -168,10 +168,10 @@ export component SystemControls inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: 8px;
-                    SysPill { text: "1000 Hz (1 ms)"; pill-width: 158px; active: root.polling-rate-idx == 0; clicked => { root.select-polling-rate(0); } }
-                    SysPill { text: "500 Hz (2 ms)"; pill-width: 158px; active: root.polling-rate-idx == 1; clicked => { root.select-polling-rate(1); } }
-                    SysPill { text: "250 Hz (4 ms)"; pill-width: 158px; active: root.polling-rate-idx == 2; clicked => { root.select-polling-rate(2); } }
-                    SysPill { text: "125 Hz (8 ms)"; pill-width: 158px; active: root.polling-rate-idx == 3; clicked => { root.select-polling-rate(3); } }
+                    SysPill { text: "1000 Hz (1 ms)"; pill-width: 162px; active: root.polling-rate-idx == 0; clicked => { root.select-polling-rate(0); } }
+                    SysPill { text: "500 Hz (2 ms)"; pill-width: 162px; active: root.polling-rate-idx == 1; clicked => { root.select-polling-rate(1); } }
+                    SysPill { text: "250 Hz (4 ms)"; pill-width: 162px; active: root.polling-rate-idx == 2; clicked => { root.select-polling-rate(2); } }
+                    SysPill { text: "125 Hz (8 ms)"; pill-width: 162px; active: root.polling-rate-idx == 3; clicked => { root.select-polling-rate(3); } }
                 }
             }
         }
@@ -181,7 +181,7 @@ export component SystemControls inherits Rectangle {
             alignment: space-between;
 
             Rectangle {
-                width: 338px;
+                width: 340px;
                 height: 36px;
                 border-radius: Theme.radius-sm;
                 background: sync-ta.has-hover ? Theme.surface-hover : Theme.surface-active;
@@ -204,7 +204,7 @@ export component SystemControls inherits Rectangle {
             }
 
             Rectangle {
-                width: 338px;
+                width: 340px;
                 height: 36px;
                 border-radius: Theme.radius-sm;
                 background: rst-ta.has-hover ? Theme.surface-hover : Theme.surface-raised;
