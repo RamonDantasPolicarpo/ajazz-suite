@@ -119,7 +119,7 @@ O pacote de 64 bytes usa cabeçalho de 5 bytes e slots consecutivos de 4 bytes i
     - Subcategoria `System management class` (`0x1b`/`0x1c`/`0x1d`): **`40 <01|02|04> 00 00`** = **Sistema ACPI (`SystemKey`: `01=Power`, `02=Sleep`, `04=Wake Up`, HID `UsagePage 0x01 / Usage 0x80`)** — **não é Sniper DPI**.
     - Nota sobre *Sniper key*: `215=Sniper key` / `216=Set Sniper key` (`0x54`) em `sub_435ea0` não têm handler em `sub_4209c0` nem opcode no firmware AJ179; troca de DPI em botão usa `DPI+` (`1F 01 00 00`) ou `DPI-` (`1F 00 00 00`).
   - **Especial (`9, 10, 11`)**: `50 <09|0A|0B> <val> 00`
-  - **Macro (`5`)**: `60 <macro_idx> <loop_mode> <loop_count>` (`loop_mode`: `0=N vezes`, `1=até soltar`, `2=até pressionar novamente`)
+  - **Macro (`5`)**: `60 <macro_idx> <loop_count> <loop_mode>` (`sub_425440` + `sub_415790` em `label_4158b9` + `sub_415200`: `byte[2]=*(edi+0x20)=loop_count` com mínimo `1`; `byte[3]=*(edi+0x24)=loop_mode`: `0=N vezes`, `1=até soltar`, `2=alternar até pressionar novamente`)
 
 ---
 
@@ -149,8 +149,8 @@ O pacote de 64 bytes usa cabeçalho de 5 bytes e slots consecutivos de 4 bytes i
   - Número de pacotes: `num_chunks = (total_len / 59) + 1` (`0x3B == 59`).
   - Cada pacote de 64 bytes (`expect_reply = 1`, seguido de `Sleep(10)`):
     - `[0]=0x06, [1]=0x31, [2]=chunk_len` (`0x3B`, exceto o último pacote que envia `total_len % 0x3B`), `[3..4]=offset:u16_le`, `[5..63]=dados`.
-- **Vínculo em Botão (`06 12`, `sub_4310e0`)**:
-  - Slot do botão preenchido com `[0x60, macro_idx, loop_mode, loop_count]`, onde `macro_idx` (`0..31`) aponta para a entrada na tabela `[0x00..0x3F]` e `loop_mode` é `0` (N vezes, `loop_count >= 1`), `1` (até soltar o botão) ou `2` (alternar até pressionar novamente).
+- **Vínculo em Botão (`06 12`, `sub_4310e0`, `sub_415790`, `sub_425440`)**:
+  - Slot do botão preenchido com `[0x60, macro_idx, loop_count, loop_mode]`, onde `macro_idx` (`0..31`) aponta para a entrada na tabela `[0x00..0x3F]`, `loop_count >= 1` (`1` por padrão nos modos `1`/`2` em `sub_425440`), e `loop_mode` é `0` (N vezes), `1` (até soltar o botão) ou `2` (alternar até pressionar novamente). *(Nota: nunca enviar `loop_count=0` ou `loop_mode>2` para a flash do MCU.)*
 
 ---
 
