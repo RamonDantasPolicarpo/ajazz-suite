@@ -4,6 +4,12 @@ members = [
     "crates/ajazz-protocol",
     "crates/ajazz-daemon",
     "crates/ajazz-gui",
+    "crates/ajazz-setup",
+]
+default-members = [
+    "crates/ajazz-protocol",
+    "crates/ajazz-daemon",
+    "crates/ajazz-gui",
 ]
 
 [workspace.package]
