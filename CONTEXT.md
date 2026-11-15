@@ -39,6 +39,9 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
   - **Keymap (`Opcode 0x03`, `0x1B`, `0x07`, `0x09`)**: Descoberta dinâmica de `total_keys` e blocos de macro (`0x03`), mapa `led_map[hw_key_idx] == phys_led` (`0x1B`), leitura base da `KeyMatrix` (`0x07`), registros de 3 bytes Big-Endian (`Tecla/Combo`, `Mouse`, `Mídia/Consumer`, `Sistema ACPI`, `Macro 0x70/0x71`, `Camada`, `Fn`, `Desabilitar`) com `AK820_FACTORY_ASSIGNMENTS` (82 teclas) e escrita fechada em transação (`0x01 -> 0x09 -> 0x02`).
   - **Macros (`Opcode 0x15`)**: Contêiner binário `0x55AA` LE empacotado com tabela de offsets e eventos de 4 bytes (`Type 10` HID, `9` Modificador, `1` Botão Mouse, `4/5` Movimento X/Y relativo).
   - **Audio Sync (`crates/ajazz-protocol/src/audio.rs`, Modo `0x1D -> 0xFE`)**: Pipeline zero-alloc derivado do `AudioRecord.exe` + executável oficial (`FFT radix-2 1024`, 25 bandas espectrais com fluxo/desvio-padrão, decaimento por tecla de `sub_4b4c70`, 7 estilos `0..=6`: `VerticalBars`, `RainbowPulse`, `CenterWave`, `ConcentricRings`, `PeakDrop`, `HorizontalBars`, `ZigZagBars` e fundo configurável).
+  - **Polimento Final de Interface & Ícone da Bandeja (`ajazz-gui`, `ajazz-daemon`)**:
+    - Padronizado respiro horizontal (`20px` iguais à esquerda/direita para cards `720px`) em `app.slint`, `mouse_view.slint` e `settings_view.slint`; corrigidos cortes verticais (`SystemControls` com `wasd-swap`, `MacroControls` sem corte em `LIMPAR PASSOS`, `KeyboardDiag`, tabela `Diagnostico` do mouse e `Estágios de DPI` S6), sobreposição dos rótulos nos botões do esquema vetorial do mouse (`[0]..[4]` fora dos contornos + 5 `MouseSlotChip`s visíveis), estouro de largura das pílulas de categoria (`432px`), aviso de botão esquerdo dinâmico e textos longos com `overflow: elide` / `word-wrap`.
+    - Atualizado `create_tray_icon()` em `crates/ajazz-daemon/src/tray.rs` para rasterizar em 32×32 com supersampling 4×4 a geometria exata de `crates/ajazz-gui/ui/assets/logo.svg`.
 - **Daemon (`ajazz-daemon`):**
   - `UserProfile` estendido com `system`, `keymap`, `macros` e campos `audio_style`/`audio_bg_enabled`/`audio_bg_color` retrocompatíveis (`#[serde(default)]`).
   - Capturador WASAPI loopback nativo (`crates/ajazz-daemon/src/audio_capture.rs`, COM FFI zero dependências extras e buffers fixos `[f32; 1024]`) enviando quadros via `Opcode 0x12` (~30 FPS, skip em silêncio estável).
@@ -93,6 +96,7 @@ Este documento registra a posição exata do projeto, decisões tomadas, descobe
 
 - `034a898`: `fix(protocol,daemon,docs): fix mouse macro loop layout, HID lag recovery and DPI auto-sync`
 - `d48ccf3`: `feat(gui): add SVG identity, mouse vector shapes, colored DPI dots and DPI UI fixes`
+- `ac7347a`: `feat(daemon,gui): add keyboard chattering monitor, mouse stuck-input tracking and Win32 system tray`
 
 ---
 

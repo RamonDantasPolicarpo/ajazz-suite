@@ -405,46 +405,92 @@ const CMD_TOGGLE_AUTOSTART: usize = 1002;
 #[cfg(windows)]
 const CMD_EXIT: usize = 1003;
 
-/// Desenha um ícone 16x16 minimalista em memória (fundo grafite `#18181B` com aro `#71717A` e pontos `A`/`J` brancos).
+/// Verifica se o ponto `(x, y)` está dentro do retângulo arredondado de centro `(cx, cy)`.
+fn rounded_rect_sdf(x: f32, y: f32, cx: f32, cy: f32, half_w: f32, half_h: f32, radius: f32) -> f32 {
+    let qx = (x - cx).abs() - (half_w - radius);
+    let qy = (y - cy).abs() - (half_h - radius);
+    let out = qx.max(0.0).hypot(qy.max(0.0));
+    let inside = qx.max(qy).min(0.0);
+    out + inside - radius
+}
+
+/// Testa se o ponto `(x, y)` está dentro de um polígono convexo/simples pelo método ray-casting.
+fn point_in_poly(x: f32, y: f32, poly: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let (xi, yi) = poly[i];
+        let (xj, yj) = poly[j];
+        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if intersect {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Rasteriza a geometria vetorial de `crates/ajazz-gui/ui/assets/logo.svg` em 32×32 ARGB pré-multiplicado.
+fn render_logo_32x32_bgra() -> [u32; 32 * 32] {
+    const SIZE: usize = 32;
+    const SUB: usize = 4;
+    const SAMPLES: f32 = (SUB * SUB) as f32;
+    const LEG_LEFT: [(f32, f32); 4] = [(8.5, 23.5), (14.4, 8.5), (17.8, 8.5), (11.9, 23.5)];
+    const LEG_RIGHT: [(f32, f32); 4] = [(18.3, 12.6), (23.5, 23.5), (20.0, 23.5), (16.3, 15.6)];
+
+    let mut out = [0u32; SIZE * SIZE];
+    for py in 0..SIZE {
+        for px in 0..SIZE {
+            let (mut r_acc, mut g_acc, mut b_acc, mut a_acc) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            for sy in 0..SUB {
+                for sx in 0..SUB {
+                    let x = px as f32 + (sx as f32 + 0.5) / SUB as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / SUB as f32;
+
+                    // Outer rounded rect: x=1..31, y=1..31, rx=7, stroke-width=1.5
+                    let sd_outer = rounded_rect_sdf(x, y, 16.0, 16.0, 15.0, 15.0, 7.0);
+                    if sd_outer > 0.75 {
+                        continue;
+                    }
+
+                    // Ordem de pintura do logo.svg: fill -> stroke -> A paths -> square verde
+                    let (r, g, b) = if sd_outer >= -0.75 {
+                        (0x3F as f32, 0x3F as f32, 0x46 as f32) // #3F3F46 border
+                    } else if rounded_rect_sdf(x, y, 16.0, 21.0, 1.7, 1.7, 0.9) <= 0.0 {
+                        (0x22 as f32, 0xC5 as f32, 0x5E as f32) // #22C55E green accent
+                    } else if point_in_poly(x, y, &LEG_LEFT) || point_in_poly(x, y, &LEG_RIGHT) {
+                        (0xF4 as f32, 0xF4 as f32, 0xF5 as f32) // #F4F4F5 monogram
+                    } else {
+                        (0x18 as f32, 0x18 as f32, 0x1B as f32) // #18181B graphite bg
+                    };
+
+                    r_acc += r;
+                    g_acc += g;
+                    b_acc += b;
+                    a_acc += 255.0;
+                }
+            }
+
+            // Média já fica naturalmente pré-multiplicada pelos pixels opacos cobertos
+            let a = (a_acc / SAMPLES).round().clamp(0.0, 255.0) as u32;
+            let r = (r_acc / SAMPLES).round().clamp(0.0, 255.0) as u32;
+            let g = (g_acc / SAMPLES).round().clamp(0.0, 255.0) as u32;
+            let b = (b_acc / SAMPLES).round().clamp(0.0, 255.0) as u32;
+            out[py * SIZE + px] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+    out
+}
+
+/// Gera em memória o ícone 32×32 idêntico ao `logo.svg` da janela (fundo `#18181B`, borda `#3F3F46`, monograma `#F4F4F5` e ponto `#22C55E`).
 #[cfg(windows)]
 fn create_tray_icon() -> *mut std::ffi::c_void {
     use std::ffi::c_void;
-    const W: usize = 16;
-    const H: usize = 16;
-    // Pattern 16x16 de monograma compacto "AJ" dentro de selo arredondado
-    const GLYPH: [&[u8; 16]; 16] = [
-        b"..############..",
-        b".#            #.",
-        b"#              #",
-        b"#              #",
-        b"#   ##      ## #",
-        b"#  #  #      # #",
-        b"# #    #     # #",
-        b"# ######     # #",
-        b"# #    #     # #",
-        b"# #    #  #  # #",
-        b"# #    #   ##  #",
-        b"#              #",
-        b"#              #",
-        b"#              #",
-        b".#            #.",
-        b"..############..",
-    ];
-    let mut bgra = [0u32; W * H];
-    for y in 0..H {
-        for x in 0..W {
-            let px = match GLYPH[y][x] {
-                b'#' => 0xFFFF_FFFF, // Branco opaco (#FFFFFF)
-                b' ' => 0xFF18_181B, // Grafite escuro (#18181B)
-                _ => 0x0000_0000,    // Transparente fora dos cantos arredondados
-            };
-            bgra[y * W + x] = px;
-        }
-    }
-    let mask = [0u16; H]; // Bitmask 0 para usar alpha da superfície 32bpp
+    let bgra = render_logo_32x32_bgra();
+    let mask = [0u32; 32]; // Bitmask 0 para usar o canal alpha da superfície 32bpp
     unsafe {
-        let hbm_color = win32::CreateBitmap(16, 16, 1, 32, bgra.as_ptr().cast::<c_void>());
-        let hbm_mask = win32::CreateBitmap(16, 16, 1, 1, mask.as_ptr().cast::<c_void>());
+        let hbm_color = win32::CreateBitmap(32, 32, 1, 32, bgra.as_ptr().cast::<c_void>());
+        let hbm_mask = win32::CreateBitmap(32, 32, 1, 1, mask.as_ptr().cast::<c_void>());
         let info = win32::IconInfo {
             f_icon: 1,
             x_hotspot: 0,
@@ -692,6 +738,19 @@ mod tests {
         st.set_keyboard(true);
         st.set_mouse(true, Some(70));
         assert_eq!(st.summary_text(), "AK820: OK  |  AJ179: 70%");
+    }
+
+    #[test]
+    fn tray_logo_rasterizer_matches_svg_palette() {
+        let px = render_logo_32x32_bgra();
+        // Canto externo (0, 0) deve ser transparente
+        assert_eq!(px[0], 0);
+        // Centro do quadrado verde (16, 21) -> #22C55E
+        assert_eq!(px[21 * 32 + 16], 0xFF22_C55E);
+        // Interior da perna esquerda (13, 16) -> #F4F4F5
+        assert_eq!(px[16 * 32 + 13], 0xFFF4_F4F5);
+        // Interior do fundo grafite (6, 6) -> #18181B
+        assert_eq!(px[6 * 32 + 6], 0xFF18_181B);
     }
 
     #[cfg(all(windows, target_pointer_width = "64"))]

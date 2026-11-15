@@ -358,7 +358,10 @@ export component MainWindow inherits Window {
 
             // Aba 0: Teclado AK820
             if (root.active-tab == 0) : VerticalLayout {
-                padding: 14px;
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 12px;
+                padding-bottom: 12px;
                 spacing: 8px;
                 alignment: start;
 
@@ -378,12 +381,14 @@ export component MainWindow inherits Window {
                             color: Theme.text-primary;
                         }
                         Text {
+                            width: 490px;
                             text: root.feedback-text != ""
                                 ? root.feedback-text
                                 : "EVision Semiconductor (VID 0x320F / PID 0x505B) • UsagePage 0xFF1C";
                             font-family: Theme.mono-font;
                             font-size: 9px;
                             color: root.feedback-is-error ? Theme.status-error : (root.feedback-text != "" ? Theme.status-online : Theme.text-secondary);
+                            overflow: elide;
                         }
                     }
 

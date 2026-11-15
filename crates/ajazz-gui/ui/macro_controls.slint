@@ -128,6 +128,7 @@ export component MacroControls inherits Rectangle {
                             border-width: 1px;
 
                             Text {
+                                width: parent.width - 16px;
                                 text: (idx + 1) + ". " + name;
                                 font-family: Theme.mono-font;
                                 font-size: 9px;
@@ -135,6 +136,7 @@ export component MacroControls inherits Rectangle {
                                 color: Theme.text-primary;
                                 x: 8px;
                                 y: (parent.height - self.height) / 2;
+                                overflow: elide;
                             }
 
                             m-ta := TouchArea {
@@ -283,15 +285,18 @@ export component MacroControls inherits Rectangle {
                 border-width: 1px;
 
                 Text {
+                    width: parent.width - 16px;
+                    x: 8px;
+                    y: (parent.height - self.height) / 2;
                     text: root.is-recording
-                        ? "GRAVANDO: Digite teclas ou clique AQUI para capturar mouse. Clique em 'PARAR GRAVAÇÃO' ao concluir."
+                        ? "GRAVANDO: Digite teclas ou clique aqui para capturar mouse. Ao terminar, clique em 'PARAR GRAVAÇÃO'."
                         : "Modo edição manual (clique em 'GRAVAR AO VIVO' para capturar teclado e mouse).";
                     font-family: Theme.mono-font;
                     font-size: 9px;
                     font-weight: root.is-recording ? 700 : 400;
                     color: root.is-recording ? Theme.status-warning : Theme.text-muted;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
                 }
 
                 rec-fs := FocusScope {
@@ -328,7 +333,7 @@ export component MacroControls inherits Rectangle {
 
             // Tabela rolável de Passos da Macro
             Rectangle {
-                height: root.is-recording ? 156px : 174px;
+                height: root.is-recording ? 144px : 162px;
                 background: Theme.surface-raised;
                 border-radius: Theme.radius-md;
                 border-color: Theme.border;
@@ -368,7 +373,7 @@ export component MacroControls inherits Rectangle {
                                 HorizontalLayout {
                                     spacing: 10px;
                                     Text { text: step.index-label; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-muted; vertical-alignment: center; width: 26px; }
-                                    Text { text: step.action-label; font-family: Theme.mono-font; font-size: 9px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; width: 210px; }
+                                    Text { text: step.action-label; font-family: Theme.mono-font; font-size: 9px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; width: 210px; overflow: elide; }
                                 }
 
                                 HorizontalLayout {

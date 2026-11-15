@@ -11,14 +11,17 @@ export component SettingsView inherits Rectangle {
     background: Theme.background;
 
     VerticalLayout {
-        padding: 24px;
-        spacing: 16px;
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 12px;
         alignment: start;
 
         Text {
             text: "CONFIGURAÇÕES DO SISTEMA & DAEMON";
             font-family: Theme.mono-font;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
             color: Theme.text-primary;
         }
@@ -26,16 +29,16 @@ export component SettingsView inherits Rectangle {
         Text {
             text: "Parâmetros operacionais do serviço headless e inicialização.";
             font-family: Theme.mono-font;
-            font-size: 10px;
+            font-size: 9px;
             color: Theme.text-secondary;
         }
 
-        Rectangle { height: 8px; }
+        Rectangle { height: 4px; }
 
         // Card do Serviço Daemon
         Rectangle {
-            width: 580px;
-            height: 160px;
+            width: 720px;
+            height: 164px;
             background: Theme.surface;
             border-radius: Theme.radius-lg;
             border-color: Theme.border;

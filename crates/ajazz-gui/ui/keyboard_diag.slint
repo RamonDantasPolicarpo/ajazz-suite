@@ -171,11 +171,11 @@ export component KeyboardDiagControls inherits Rectangle {
                     Text { text: "PRESSÕES"; width: 110px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
                     Text { text: "CHATTER"; width: 110px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
                     Text { text: "ÚLTIMO HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { text: "MENOR HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: "MENOR HIATO"; width: 124px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
                 }
 
                 if (root.chatter-rows.length == 0) : Rectangle {
-                    height: 114px;
+                    height: 106px;
                     Text {
                         text: root.chatter-enabled
                             ? "Digite normalmente para registrar intervalos de soltura → repressão (ignora tecla segurada)."
@@ -191,7 +191,7 @@ export component KeyboardDiagControls inherits Rectangle {
                 }
 
                 if (root.chatter-rows.length > 0) : Flickable {
-                    height: 114px;
+                    height: 106px;
                     content-height: root.chatter-rows.length * 28px;
 
                     VerticalLayout {
@@ -206,20 +206,22 @@ export component KeyboardDiagControls inherits Rectangle {
                             HorizontalLayout {
                                 padding-left: 8px;
                                 padding-right: 8px;
-                                Text { text: row.key-label; width: 170px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; }
+                                Text { text: row.key-label; width: 170px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; overflow: elide; }
                                 Text { text: "" + row.total-presses; width: 110px; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; }
                                 Text { text: "" + row.chatter-count; width: 110px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.status-online; vertical-alignment: center; }
                                 Text { text: row.last-ms; width: 130px; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; }
-                                Text { text: row.min-ms; width: 130px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; }
+                                Text { text: row.min-ms; width: 124px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; }
                             }
                         }
                     }
                 }
 
                 Text {
+                    width: parent.width - 20px;
                     text: "Dica: o firmware do AK820 não tem debounce configurável. Use esta tabela durante a digitação para achar switches que precisem de troca.";
                     font-size: 9px;
                     color: Theme.text-muted;
+                    wrap: word-wrap;
                 }
             }
         }

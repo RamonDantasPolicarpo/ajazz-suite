@@ -31,13 +31,16 @@ component MousePill inherits Rectangle {
     opacity: root.enabled ? 1.0 : 0.4;
 
     Text {
+        width: parent.width - 10px;
+        x: 5px;
+        y: (parent.height - self.height) / 2;
         text: root.text;
         font-family: Theme.mono-font;
         font-size: 9px;
         font-weight: root.active || root.highlight ? 700 : 500;
         color: root.highlight && root.enabled ? Theme.status-online : (root.active ? Theme.text-primary : Theme.text-secondary);
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+        horizontal-alignment: center;
+        overflow: elide;
     }
 
     ta := TouchArea {
@@ -238,7 +241,10 @@ export component MouseView inherits Rectangle {
     background: Theme.background;
 
     VerticalLayout {
-        padding: 14px;
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 12px;
+        padding-bottom: 12px;
         spacing: 8px;
         alignment: start;
 
@@ -258,12 +264,14 @@ export component MouseView inherits Rectangle {
                     color: Theme.text-primary;
                 }
                 Text {
+                    width: 390px;
                     text: root.ms-feedback-text != "" ? root.ms-feedback-text : root.ms-fw-label;
                     font-family: Theme.mono-font;
                     font-size: 9px;
                     color: root.ms-feedback-is-error
                         ? Theme.status-error
                         : (root.ms-feedback-text != "" ? Theme.status-online : Theme.text-secondary);
+                    overflow: elide;
                 }
             }
 
@@ -461,14 +469,14 @@ export component MouseView inherits Rectangle {
             // Card 1: Estágios de DPI (6 slots, 50..26000)
             Rectangle {
                 width: 720px;
-                height: 238px;
+                height: 264px;
                 background: Theme.surface;
                 border-radius: Theme.radius-lg;
                 border-color: Theme.border;
                 border-width: 1px;
 
                 VerticalLayout {
-                    padding: 12px;
+                    padding: 14px;
                     spacing: 7px;
 
                     HorizontalLayout {
@@ -643,11 +651,13 @@ export component MouseView inherits Rectangle {
                         }
 
                         Text {
+                            width: 44px;
                             text: is-active ? "ATIVO" : (idx < root.dpi-count ? "" : "INATIVO");
                             font-family: Theme.mono-font;
                             font-size: 8px;
                             font-weight: 700;
                             color: is-active ? Theme.status-online : Theme.text-muted;
+                            horizontal-alignment: right;
                             vertical-alignment: center;
                         }
                     }
@@ -720,7 +730,7 @@ export component MouseView inherits Rectangle {
                             spacing: 8px;
                             MousePill {
                                 text: root.motion-sync ? "Motion Sync: ON" : "Motion Sync: OFF";
-                                pill-width: 168px;
+                                pill-width: 167px;
                                 pill-height: 26px;
                                 active: root.motion-sync;
                                 highlight: root.motion-sync;
@@ -728,7 +738,7 @@ export component MouseView inherits Rectangle {
                             }
                             MousePill {
                                 text: root.ripple-control ? "Ripple Control: ON" : "Ripple Control: OFF";
-                                pill-width: 168px;
+                                pill-width: 167px;
                                 pill-height: 26px;
                                 active: root.ripple-control;
                                 highlight: root.ripple-control;
@@ -736,7 +746,7 @@ export component MouseView inherits Rectangle {
                             }
                             MousePill {
                                 text: root.linear-correction ? "Angle Snapping: ON" : "Angle Snapping: OFF";
-                                pill-width: 168px;
+                                pill-width: 167px;
                                 pill-height: 26px;
                                 active: root.linear-correction;
                                 highlight: root.linear-correction;
@@ -744,7 +754,7 @@ export component MouseView inherits Rectangle {
                             }
                             MousePill {
                                 text: root.highspeed-mode ? "High-Speed: ON" : "High-Speed: OFF";
-                                pill-width: 162px;
+                                pill-width: 167px;
                                 pill-height: 26px;
                                 active: root.highspeed-mode;
                                 highlight: root.highspeed-mode;
@@ -839,10 +849,10 @@ export component MouseView inherits Rectangle {
 
                         // Vista Superior (shape_mouse_cima.svg - viewBox 0 0 326 589)
                         Rectangle {
-                            x: 42px;
+                            x: 50px;
                             y: 6px;
-                            width: 140px;
-                            height: 253px;
+                            width: 124px;
+                            height: 224px;
 
                             // Corpo completo
                             Path {
@@ -900,61 +910,34 @@ export component MouseView inherits Rectangle {
                                 commands: "M158.066 56.634 L170.022 56.634 C175.481 56.634 179.906 61.059 179.906 66.518 L179.906 146.615 C179.906 152.074 175.481 156.499 170.022 156.499 L158.066 156.499 C152.607 156.499 148.182 152.074 148.182 146.615 L148.182 66.518 C148.182 61.059 152.607 56.634 158.066 56.634 Z";
                             }
 
-                            // Rótulos internos de [0] ESQ e [1] DIR
-                            VerticalLayout {
-                                x: 14px;
-                                y: 58px;
-                                width: 46px;
-                                spacing: 2px;
-
-                                Text {
-                                    text: "[0] ESQ";
-                                    font-family: Theme.mono-font;
-                                    font-size: 7px;
-                                    font-weight: 700;
-                                    color: root.selected-slot == 0 ? Theme.text-primary : Theme.text-muted;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: root.button-labels.length > 0 ? root.button-labels[0] : "Clique Esq.";
-                                    font-family: Theme.mono-font;
-                                    font-size: 7px;
-                                    font-weight: 600;
-                                    color: root.selected-slot == 0 ? Theme.text-primary : Theme.text-secondary;
-                                    horizontal-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-
-                            VerticalLayout {
-                                x: 80px;
-                                y: 58px;
-                                width: 46px;
-                                spacing: 2px;
-
-                                Text {
-                                    text: "[1] DIR";
-                                    font-family: Theme.mono-font;
-                                    font-size: 7px;
-                                    font-weight: 700;
-                                    color: root.selected-slot == 1 ? Theme.text-primary : Theme.text-muted;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: root.button-labels.length > 1 ? root.button-labels[1] : "Clique Dir.";
-                                    font-family: Theme.mono-font;
-                                    font-size: 7px;
-                                    font-weight: 600;
-                                    color: root.selected-slot == 1 ? Theme.text-primary : Theme.text-secondary;
-                                    horizontal-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-
-                            // Indicador [2] no Scroll
+                            // Rótulos numéricos limpos (sem sobrepor contornos)
                             Text {
-                                x: 60px;
-                                y: 40px;
+                                x: 20px;
+                                y: 48px;
+                                width: 26px;
+                                text: "[0]";
+                                font-family: Theme.mono-font;
+                                font-size: 8px;
+                                font-weight: 700;
+                                color: root.selected-slot == 0 ? Theme.text-primary : Theme.text-secondary;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                x: 78px;
+                                y: 48px;
+                                width: 26px;
+                                text: "[1]";
+                                font-family: Theme.mono-font;
+                                font-size: 8px;
+                                font-weight: 700;
+                                color: root.selected-slot == 1 ? Theme.text-primary : Theme.text-secondary;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                x: 52px;
+                                y: 36px;
                                 width: 20px;
                                 text: "2";
                                 font-family: Theme.mono-font;
@@ -966,8 +949,8 @@ export component MouseView inherits Rectangle {
 
                             // Marca sutil no dorso do mouse
                             Text {
-                                x: 20px;
-                                y: 186px;
+                                x: 12px;
+                                y: 162px;
                                 width: 100px;
                                 text: "AJ179 NL P";
                                 font-family: Theme.mono-font;
@@ -979,36 +962,36 @@ export component MouseView inherits Rectangle {
 
                             // Áreas clicáveis (Scroll declarado depois para prioridade sobre ESQ/DIR)
                             ta-btn0 := TouchArea {
-                                x: 10px;
+                                x: 8px;
                                 y: 6px;
-                                width: 60px;
-                                height: 112px;
+                                width: 48px;
+                                height: 96px;
                                 clicked => { root.slot-selected(0); }
                             }
 
                             ta-btn1 := TouchArea {
-                                x: 70px;
+                                x: 68px;
                                 y: 6px;
-                                width: 60px;
-                                height: 112px;
+                                width: 48px;
+                                height: 96px;
                                 clicked => { root.slot-selected(1); }
                             }
 
                             ta-btn2 := TouchArea {
-                                x: 59px;
-                                y: 20px;
-                                width: 22px;
-                                height: 50px;
+                                x: 52px;
+                                y: 18px;
+                                width: 20px;
+                                height: 48px;
                                 clicked => { root.slot-selected(2); }
                             }
                         }
 
                         // Vista Lateral (shape_mouse_lado.svg - viewBox 0 0 589 206)
                         Rectangle {
-                            x: 5px;
-                            y: 266px;
-                            width: 214px;
-                            height: 75px;
+                            x: 10px;
+                            y: 234px;
+                            width: 204px;
+                            height: 71px;
 
                             // Corpo lateral
                             Path {
@@ -1053,9 +1036,9 @@ export component MouseView inherits Rectangle {
                             }
 
                             Text {
-                                x: 65px;
-                                y: 6px;
-                                width: 20px;
+                                x: 61px;
+                                y: 38px;
+                                width: 22px;
                                 text: "[3]";
                                 font-family: Theme.mono-font;
                                 font-size: 7px;
@@ -1065,9 +1048,9 @@ export component MouseView inherits Rectangle {
                             }
 
                             Text {
-                                x: 101px;
-                                y: 4px;
-                                width: 20px;
+                                x: 96px;
+                                y: 38px;
+                                width: 22px;
                                 text: "[4]";
                                 font-family: Theme.mono-font;
                                 font-size: 7px;
@@ -1077,28 +1060,44 @@ export component MouseView inherits Rectangle {
                             }
 
                             ta-btn3 := TouchArea {
-                                x: 56px;
-                                y: 15px;
-                                width: 37px;
-                                height: 26px;
+                                x: 53px;
+                                y: 14px;
+                                width: 35px;
+                                height: 24px;
                                 clicked => { root.slot-selected(3); }
                             }
 
                             ta-btn4 := TouchArea {
-                                x: 94px;
-                                y: 15px;
-                                width: 37px;
-                                height: 26px;
+                                x: 89px;
+                                y: 14px;
+                                width: 35px;
+                                height: 24px;
                                 clicked => { root.slot-selected(4); }
                             }
                         }
 
-                        // Chips com ação atual dos botões compactos ([2] Scroll, [3] Avançar, [4] Voltar)
+                        // Lista limpa dos 5 slots (zero sobreposição no diagrama)
                         VerticalLayout {
                             x: 10px;
-                            y: 348px;
+                            y: 312px;
                             width: 204px;
                             spacing: 4px;
+
+                            MouseSlotChip {
+                                slot-num: 0;
+                                slot-name: "ESQ";
+                                binding-label: root.button-labels.length > 0 ? root.button-labels[0] : "Clique Esq.";
+                                selected: root.selected-slot == 0;
+                                clicked => { root.slot-selected(0); }
+                            }
+
+                            MouseSlotChip {
+                                slot-num: 1;
+                                slot-name: "DIR";
+                                binding-label: root.button-labels.length > 1 ? root.button-labels[1] : "Clique Dir.";
+                                selected: root.selected-slot == 1;
+                                clicked => { root.slot-selected(1); }
+                            }
 
                             MouseSlotChip {
                                 slot-num: 2;
@@ -1127,7 +1126,7 @@ export component MouseView inherits Rectangle {
 
                         Text {
                             x: 0px;
-                            y: 418px;
+                            y: 422px;
                             width: 224px;
                             text: "PAW3395 • NearLink 2.4G";
                             font-family: Theme.mono-font;
@@ -1182,12 +1181,14 @@ export component MouseView inherits Rectangle {
                         }
 
                         Text {
+                            max-width: 240px;
                             text: "Atual: " + root.slot-current-binding;
                             font-family: Theme.mono-font;
                             font-size: 10px;
                             font-weight: 700;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
+                            overflow: elide;
                         }
                     }
 
@@ -1200,6 +1201,7 @@ export component MouseView inherits Rectangle {
                         border-width: 1px;
 
                         Text {
+                            width: parent.width - 20px;
                             text: "Trava ativa: mantenha pelo menos um botão com Clique Esquerdo.";
                             font-family: Theme.mono-font;
                             font-size: 9px;
@@ -1207,23 +1209,24 @@ export component MouseView inherits Rectangle {
                             color: Theme.status-warning;
                             x: 10px;
                             y: (parent.height - self.height) / 2;
+                            overflow: elide;
                         }
                     }
 
-                    // Categorias de Ação
+                    // Categorias de Ação (soma exata = 432px)
                     HorizontalLayout {
                         spacing: 4px;
-                        MousePill { text: "Mouse"; pill-width: 72px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
+                        MousePill { text: "Mouse"; pill-width: 70px; active: root.btn-category == 0; clicked => { root.btn-category-selected(0); } }
                         MousePill { text: "Teclado"; pill-width: 72px; active: root.btn-category == 1; clicked => { root.btn-category-selected(1); } }
-                        MousePill { text: "Mídia"; pill-width: 68px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
-                        MousePill { text: "Sistema"; pill-width: 72px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
-                        MousePill { text: "Macro"; pill-width: 68px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
-                        MousePill { text: "Desab."; pill-width: 72px; active: root.btn-category == 5; clicked => { root.btn-category-selected(5); } }
+                        MousePill { text: "Mídia"; pill-width: 66px; active: root.btn-category == 2; clicked => { root.btn-category-selected(2); } }
+                        MousePill { text: "Sistema"; pill-width: 70px; active: root.btn-category == 3; clicked => { root.btn-category-selected(3); } }
+                        MousePill { text: "Macro"; pill-width: 66px; active: root.btn-category == 4; clicked => { root.btn-category-selected(4); } }
+                        MousePill { text: "Desab."; pill-width: 68px; active: root.btn-category == 5; clicked => { root.btn-category-selected(5); } }
                     }
 
                     // Conteúdo da Categoria
                     Rectangle {
-                        height: 356px;
+                        height: root.btn-left-warning ? 318px : 356px;
                         background: Theme.surface-raised;
                         border-radius: Theme.radius-md;
                         border-color: Theme.border;
@@ -1342,7 +1345,7 @@ export component MouseView inherits Rectangle {
                             }
 
                             Flickable {
-                                height: 266px;
+                                height: root.btn-left-warning ? 228px : 266px;
                                 content-height: mcat-col.preferred-height;
 
                                 mcat-col := VerticalLayout {
@@ -1396,7 +1399,7 @@ export component MouseView inherits Rectangle {
                             }
 
                             Flickable {
-                                height: 300px;
+                                height: root.btn-left-warning ? 262px : 300px;
                                 content-height: med-col.preferred-height;
 
                                 med-col := VerticalLayout {
@@ -1414,13 +1417,17 @@ export component MouseView inherits Rectangle {
                                             border-width: 1px;
 
                                             Text {
+                                                width: parent.width - 10px;
                                                 text: m-idx < root.media-labels.length ? root.media-labels[m-idx] : "";
                                                 font-family: Theme.mono-font;
                                                 font-size: 9px;
                                                 font-weight: root.btn-media-idx == m-idx ? 700 : 500;
                                                 color: root.btn-media-idx == m-idx ? Theme.text-primary : Theme.text-secondary;
-                                                x: (parent.width - self.width) / 2;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                x: 5px;
                                                 y: (parent.height - self.height) / 2;
+                                                overflow: elide;
                                             }
 
                                             md-ta := TouchArea {
@@ -1435,7 +1442,7 @@ export component MouseView inherits Rectangle {
 
                         // Cat 3: Sistema ACPI (40 01|02|04 00 00)
                         if (root.btn-category == 3) : VerticalLayout {
-                            padding: 16px;
+                            padding: 14px;
                             spacing: 12px;
                             alignment: start;
 
@@ -1449,21 +1456,21 @@ export component MouseView inherits Rectangle {
 
                             MousePill {
                                 text: "Power (0x40 01) — Desliga / Suspende o PC";
-                                pill-width: 400px;
+                                pill-width: 404px;
                                 pill-height: 36px;
                                 active: root.btn-system-idx == 0;
                                 clicked => { root.btn-system-selected(0); }
                             }
                             MousePill {
                                 text: "Sleep (0x40 02) — Entra em Suspensão";
-                                pill-width: 400px;
+                                pill-width: 404px;
                                 pill-height: 36px;
                                 active: root.btn-system-idx == 1;
                                 clicked => { root.btn-system-selected(1); }
                             }
                             MousePill {
                                 text: "Wake Up (0x40 04) — Acorda o PC";
-                                pill-width: 400px;
+                                pill-width: 404px;
                                 pill-height: 36px;
                                 active: root.btn-system-idx == 2;
                                 clicked => { root.btn-system-selected(2); }
@@ -1532,7 +1539,7 @@ export component MouseView inherits Rectangle {
                             }
 
                             if (root.macro-names.length > 0) : Flickable {
-                                height: 156px;
+                                height: root.btn-left-warning ? 118px : 156px;
                                 content-height: ceil(root.macro-names.length / 2.0) * 34px;
 
                                 for mname[midx] in root.macro-names : MousePill {
@@ -1771,10 +1778,12 @@ export component MouseView inherits Rectangle {
                     }
 
                     Text {
+                        width: parent.width - 28px;
                         text: "Coloca o dongle USB em modo de pareamento (~30s). Aproxime o mouse ligado em 2.4G para reemparelhar.";
                         font-family: Theme.mono-font;
                         font-size: 9px;
                         color: Theme.text-secondary;
+                        wrap: word-wrap;
                     }
 
                     HorizontalLayout {
@@ -1820,7 +1829,7 @@ export component MouseView inherits Rectangle {
 
             Rectangle {
                 width: 720px;
-                height: 116px;
+                height: 120px;
                 background: Theme.surface;
                 border-radius: Theme.radius-lg;
                 border-color: root.chatter-total > 0 ? Theme.status-error : Theme.border;
@@ -1851,11 +1860,13 @@ export component MouseView inherits Rectangle {
                     }
 
                     Text {
+                        width: parent.width - 28px;
                         text: root.chatter-alert-text;
                         font-family: Theme.mono-font;
                         font-size: 10px;
                         font-weight: 700;
                         color: root.chatter-total > 0 ? Theme.status-error : Theme.status-online;
+                        overflow: elide;
                     }
 
                     HorizontalLayout {
@@ -1914,7 +1925,7 @@ export component MouseView inherits Rectangle {
 
             Rectangle {
                 width: 720px;
-                height: 264px;
+                height: 316px;
                 background: Theme.surface;
                 border-radius: Theme.radius-lg;
                 border-color: Theme.border;
@@ -2001,6 +2012,7 @@ export component MouseView inherits Rectangle {
                     }
 
                     Text {
+                        width: parent.width - 28px;
                         text: "Dica: eventos Stuck Input (UP perdido ou retenção >=10s) exibem a bateria (%) no momento; rebotes <= limite ms indicam Switch Chattering.";
                         font-size: 10px;
                         color: Theme.text-muted;
