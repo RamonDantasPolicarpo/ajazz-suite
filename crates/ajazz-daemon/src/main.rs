@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod audio_capture;
 mod chattering;
 mod device_manager;
@@ -5,14 +7,17 @@ mod gif_decoder;
 mod ipc;
 mod profile_store;
 mod screen_capture;
+mod tray;
 
 use device_manager::{run_device_actor, DeviceCommand};
 use ipc::{IpcRequest, IpcResponse, IPC_PIPE_NAME};
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
+use tray::{set_autostart_enabled, spawn_tray, TrayStatus};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,13 +29,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("=== AJAZZ Background Daemon ===");
     info!("Canal IPC Named Pipe: {}", IPC_PIPE_NAME);
 
+    let tray_status = Arc::new(TrayStatus::new());
+    spawn_tray(Arc::clone(&tray_status));
+
     // Canal MPSC para isolar o hardware USB em um Actor exclusivo
     let (cmd_tx, cmd_rx) = mpsc::channel::<DeviceCommand>(64);
 
     // Inicia o Actor de controle do hardware
     let actor_tx = cmd_tx.clone();
     tokio::spawn(async move {
-        run_device_actor(actor_tx, cmd_rx).await;
+        run_device_actor(actor_tx, cmd_rx, tray_status).await;
     });
 
     // Inicia o servidor IPC Named Pipe do Windows
@@ -265,6 +273,8 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                         device_name: st.device_name,
                         profile: st.profile,
                         is_playing_gif: st.is_playing_gif,
+                        keyboard_chattering: st.keyboard_chattering,
+                        autostart_enabled: st.autostart_enabled,
                     },
                     Err(_) => IpcResponse::Error {
                         error: "Falha ao consultar status do dispositivo".into(),
@@ -352,6 +362,32 @@ async fn handle_client(pipe: NamedPipeServer, cmd_tx: mpsc::Sender<DeviceCommand
                 )
                 .await
             }
+            Ok(IpcRequest::SetKeyboardChatteringConfig { config }) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    |tx| DeviceCommand::SetKeyboardChatteringConfig(config, tx),
+                    "Monitor passivo de Switch Chattering do teclado atualizado",
+                )
+                .await
+            }
+            Ok(IpcRequest::ResetKeyboardChatteringStats) => {
+                dispatch_unit_command(
+                    &cmd_tx,
+                    DeviceCommand::ResetKeyboardChatteringStats,
+                    "Contadores de Switch Chattering do teclado zerados",
+                )
+                .await
+            }
+            Ok(IpcRequest::SetAutostart { enabled }) => match set_autostart_enabled(enabled) {
+                Ok(()) => IpcResponse::Ok {
+                    message: if enabled {
+                        "Inicialização automática com o Windows ativada".into()
+                    } else {
+                        "Inicialização automática com o Windows desativada".into()
+                    },
+                },
+                Err(error) => IpcResponse::Error { error },
+            },
             Err(e) => IpcResponse::Error {
                 error: format!("Payload JSON inválido: {e}"),
             },

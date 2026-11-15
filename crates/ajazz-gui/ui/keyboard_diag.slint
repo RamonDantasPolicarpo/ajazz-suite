@@ -1,0 +1,227 @@
+import { Theme } from "theme.slint";
+
+export struct KeyboardChatterRowItem {
+    key-label: string,
+    total-presses: int,
+    chatter-count: int,
+    last-ms: string,
+    min-ms: string,
+    has-chatter: bool,
+}
+
+component DiagBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> highlight: false;
+    in property <length> btn-width: 110px;
+    callback clicked();
+
+    width: root.btn-width;
+    height: 26px;
+    border-radius: Theme.radius-sm;
+    background: root.highlight ? Theme.surface-active : (root.active ? Theme.surface-hover : (ta.has-hover ? Theme.surface-hover : Theme.surface-raised));
+    border-color: root.highlight ? Theme.status-online : (root.active ? Theme.text-primary : Theme.border);
+    border-width: 1px;
+
+    Text {
+        text: root.text;
+        font-family: Theme.mono-font;
+        font-size: 9px;
+        font-weight: 700;
+        color: root.highlight ? Theme.status-online : (root.active ? Theme.text-primary : Theme.text-secondary);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component KeyboardDiagControls inherits Rectangle {
+    in property <bool> chatter-enabled: false;
+    in property <int> chatter-threshold-ms: 45;
+    in property <int> chatter-total: 0;
+    in property <string> chatter-alert-text: "Monitor pausado pelo usuário.";
+    in property <[KeyboardChatterRowItem]> chatter-rows: [];
+
+    callback toggle-clicked();
+    callback threshold-step(int);
+    callback reset-clicked();
+
+    width: 720px;
+    height: 318px;
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+
+        // Cartão de controle e estado
+        Rectangle {
+            height: 92px;
+            background: Theme.surface-raised;
+            border-radius: Theme.radius-md;
+            border-color: root.chatter-total > 0 ? Theme.status-error : Theme.border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "MONITOR PASSIVO DE SWITCH CHATTERING — TECLADO (RAW INPUT)";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.chatter-enabled ? "ATIVO (SEM HOOK)" : "DESATIVADO";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: root.chatter-enabled ? Theme.status-online : Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.chatter-alert-text;
+                    font-family: Theme.mono-font;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: root.chatter-total > 0 ? Theme.status-error : (root.chatter-enabled ? Theme.status-online : Theme.text-secondary);
+                }
+
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        DiagBtn {
+                            text: root.chatter-enabled ? "MONITOR: ATIVO" : "MONITOR: DESATIVADO";
+                            btn-width: 158px;
+                            active: root.chatter-enabled;
+                            highlight: root.chatter-enabled;
+                            clicked => { root.toggle-clicked(); }
+                        }
+                        DiagBtn {
+                            text: "-5 ms";
+                            btn-width: 52px;
+                            clicked => { root.threshold-step(-5); }
+                        }
+                        Rectangle {
+                            width: 104px;
+                            height: 26px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.background;
+                            border-color: Theme.border;
+                            border-width: 1px;
+                            Text {
+                                text: "Limite: " + root.chatter-threshold-ms + " ms";
+                                font-family: Theme.mono-font;
+                                font-size: 9px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        DiagBtn {
+                            text: "+5 ms";
+                            btn-width: 52px;
+                            clicked => { root.threshold-step(5); }
+                        }
+                    }
+
+                    DiagBtn {
+                        text: "ZERAR CONTADORES";
+                        btn-width: 144px;
+                        clicked => { root.reset-clicked(); }
+                    }
+                }
+            }
+        }
+
+        // Tabela rolável por tecla física
+        Rectangle {
+            height: 188px;
+            background: Theme.surface-raised;
+            border-radius: Theme.radius-md;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+
+                HorizontalLayout {
+                    height: 18px;
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text { text: "TECLA"; width: 170px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: "PRESSÕES"; width: 110px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: "CHATTER"; width: 110px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: "ÚLTIMO HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: "MENOR HIATO"; width: 130px; font-family: Theme.mono-font; font-size: 8px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                }
+
+                if (root.chatter-rows.length == 0) : Rectangle {
+                    height: 114px;
+                    Text {
+                        text: root.chatter-enabled
+                            ? "Digite normalmente para registrar intervalos de soltura → repressão (ignora tecla segurada)."
+                            : "Ative o monitor acima quando quiser testar switches com duplo clique.";
+                        font-family: Theme.mono-font;
+                        font-size: 9px;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                        width: 640px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if (root.chatter-rows.length > 0) : Flickable {
+                    height: 114px;
+                    content-height: root.chatter-rows.length * 28px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        for row in root.chatter-rows : Rectangle {
+                            height: 24px;
+                            border-radius: Theme.radius-sm;
+                            background: row.has-chatter ? #3A1C1C : Theme.surface;
+                            border-color: row.has-chatter ? Theme.status-error : Theme.border;
+                            border-width: 1px;
+
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                Text { text: row.key-label; width: 170px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; }
+                                Text { text: "" + row.total-presses; width: 110px; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; }
+                                Text { text: "" + row.chatter-count; width: 110px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.status-online; vertical-alignment: center; }
+                                Text { text: row.last-ms; width: 130px; font-family: Theme.mono-font; font-size: 9px; color: Theme.text-secondary; vertical-alignment: center; }
+                                Text { text: row.min-ms; width: 130px; font-family: Theme.mono-font; font-size: 9px; font-weight: 700; color: row.has-chatter ? Theme.status-error : Theme.text-primary; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Dica: o firmware do AK820 não tem debounce configurável. Use esta tabela durante a digitação para achar switches que precisem de troca.";
+                    font-size: 9px;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+    }
+}

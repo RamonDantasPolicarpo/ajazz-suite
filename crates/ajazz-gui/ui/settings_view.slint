@@ -135,6 +135,29 @@ export component SettingsView inherits Rectangle {
                             clicked => { root.restart-daemon(); }
                         }
                     }
+
+                    Rectangle {
+                        width: 240px;
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: root.autostart ? Theme.surface-active : (auto-touch.has-hover ? Theme.surface-hover : Theme.surface-raised);
+                        border-color: root.autostart ? Theme.status-online : Theme.border;
+                        border-width: 1px;
+
+                        Text {
+                            text: root.autostart ? "INICIAR COM WINDOWS: ATIVADO" : "INICIAR COM WINDOWS: DESATIVADO";
+                            font-family: Theme.mono-font;
+                            font-size: 9px;
+                            font-weight: 700;
+                            color: root.autostart ? Theme.status-online : Theme.text-secondary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        auto-touch := TouchArea {
+                            clicked => { root.toggle-autostart(); }
+                        }
+                    }
                 }
             }
         }

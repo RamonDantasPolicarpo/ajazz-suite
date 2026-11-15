@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 slint::include_modules!();
 
 mod file_dialog;
@@ -6,11 +8,15 @@ mod ipc_client;
 mod keymap_ui;
 mod mouse_ui;
 
-use ajazz_protocol::mouse::{MouseConfig, MouseStatus, SwitchChatteringSnapshot};
+use ajazz_protocol::mouse::{
+    MouseConfig, MouseStatus, SwitchChatteringSnapshot, CHATTERING_THRESHOLD_MAX_MS,
+    CHATTERING_THRESHOLD_MIN_MS,
+};
 use ajazz_protocol::{
-    AudioStyle, DirectionKind, GifCrop, KeyAssignment, LightingConfig, LightingDirection,
-    LightingMode, MacroAction, MacroDefinition, MacroStep, MouseButton, PollingRate, RgbColor,
-    UserProfile, AK820_KEY_LAYOUT, HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS, VISIBLE_KEYS_COUNT,
+    AudioStyle, DirectionKind, GifCrop, KeyAssignment, KeyboardChatteringSnapshot, LightingConfig,
+    LightingDirection, LightingMode, MacroAction, MacroDefinition, MacroStep, MouseButton,
+    PollingRate, RgbColor, UserProfile, AK820_KEY_LAYOUT, HID_KEY_CATALOG, TOTAL_PHYSICAL_LEDS,
+    VISIBLE_KEYS_COUNT,
 };
 use ipc_client::{send_request, IpcRequest, IpcResponse};
 use slint::{
@@ -47,6 +53,8 @@ pub struct GuiState {
     pub mouse_connected: bool,
     pub mouse_status: Option<MouseStatus>,
     pub chattering_snap: SwitchChatteringSnapshot,
+    pub kb_chattering_snap: KeyboardChatteringSnapshot,
+    pub autostart_enabled: bool,
 }
 
 impl GuiState {
@@ -56,6 +64,11 @@ impl GuiState {
         let chattering_snap = SwitchChatteringSnapshot {
             enabled: profile.mouse.chattering.enabled,
             threshold_ms: profile.mouse.chattering.threshold_ms,
+            ..Default::default()
+        };
+        let kb_chattering_snap = KeyboardChatteringSnapshot {
+            enabled: profile.keyboard_chattering.enabled,
+            threshold_ms: profile.keyboard_chattering.threshold_ms,
             ..Default::default()
         };
         Self {
@@ -83,8 +96,55 @@ impl GuiState {
             mouse_connected: false,
             mouse_status: None,
             chattering_snap,
+            kb_chattering_snap,
+            autostart_enabled: false,
         }
     }
+}
+
+fn sync_kb_chattering_to_ui(ui: &MainWindow, snap: &KeyboardChatteringSnapshot) {
+    ui.set_kb_chatter_enabled(snap.enabled);
+    ui.set_kb_chatter_threshold_ms(i32::from(snap.threshold_ms));
+    ui.set_kb_chatter_total(snap.total_chatter_events as i32);
+
+    let alert = if snap.total_chatter_events > 0 {
+        let key = snap.last_chatter_key.as_deref().unwrap_or("Tecla");
+        let ms = snap
+            .last_chatter_interval_ms
+            .map(|v| format!("{v} ms"))
+            .unwrap_or_else(|| "-- ms".into());
+        format!(
+            "Alerta: {} evento(s) de Switch Chattering! Última tecla: {key} ({ms})",
+            snap.total_chatter_events
+        )
+    } else if !snap.enabled {
+        "Monitor desativado (ative quando quiser testar duplo clique nas teclas).".into()
+    } else {
+        "Monitorando digitação — nenhum rebote anormal detectado.".into()
+    };
+    ui.set_kb_chatter_alert_text(SharedString::from(alert));
+
+    let rows: Vec<KeyboardChatterRowItem> = snap
+        .keys
+        .iter()
+        .map(|k| KeyboardChatterRowItem {
+            key_label: SharedString::from(k.label.as_str()),
+            total_presses: k.total_presses as i32,
+            chatter_count: k.chatter_count as i32,
+            last_ms: SharedString::from(
+                k.last_interval_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "--".into()),
+            ),
+            min_ms: SharedString::from(
+                k.min_interval_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "--".into()),
+            ),
+            has_chatter: k.chatter_count > 0,
+        })
+        .collect();
+    ui.set_kb_chatter_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
 }
 
 fn to_slint_color(c: RgbColor) -> Color {
@@ -439,10 +499,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rt.block_on(async move {
             let apply_status = |resp: Result<IpcResponse, String>, state_ref: &Arc<Mutex<GuiState>>, ui_w: &slint::Weak<MainWindow>, is_mouse_cmd: bool| -> bool {
                 match resp {
-                    Ok(IpcResponse::Status { device_connected, profile, is_playing_gif, .. }) => {
+                    Ok(IpcResponse::Status {
+                        device_connected,
+                        profile,
+                        is_playing_gif,
+                        keyboard_chattering,
+                        autostart_enabled,
+                        ..
+                    }) => {
                         let mut should_sync_ui = false;
                         {
                             let mut st = state_ref.lock().unwrap();
+                            st.kb_chattering_snap = keyboard_chattering.clone();
+                            st.autostart_enabled = autostart_enabled;
                             if st.is_playing_gif != is_playing_gif {
                                 st.is_playing_gif = is_playing_gif;
                             }
@@ -470,6 +539,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.set_daemon_online(true);
                             ui.set_device_connected(device_connected);
                             ui.set_is_playing_gif(is_playing_gif);
+                            ui.set_autostart_enabled(autostart_enabled);
+                            sync_kb_chattering_to_ui(&ui, &keyboard_chattering);
                             if should_sync_ui {
                                 let st = state_ui.lock().unwrap();
                                 sync_ui_from_state(&ui, &st);
@@ -1686,6 +1757,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 keymap_ui::sync_keymap_macros_system_to_ui(&ui, &st);
             }
             let _ = tx_c.send(IpcRequest::ResetKeymap);
+        });
+    }
+
+    // --- Callbacks de Diagnóstico do Teclado & Autostart ---
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_kb_chatter_toggle_clicked(move || {
+            let cfg = {
+                let mut st = st_c.lock().unwrap();
+                st.profile.keyboard_chattering.enabled = !st.profile.keyboard_chattering.enabled;
+                st.profile.keyboard_chattering.normalize();
+                st.kb_chattering_snap.enabled = st.profile.keyboard_chattering.enabled;
+                st.kb_chattering_snap.threshold_ms = st.profile.keyboard_chattering.threshold_ms;
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_kb_chattering_to_ui(&ui, &st.kb_chattering_snap);
+                }
+                st.profile.keyboard_chattering
+            };
+            let _ = tx_c.send(IpcRequest::SetKeyboardChatteringConfig { config: cfg });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_kb_chatter_threshold_step(move |delta| {
+            let cfg = {
+                let mut st = st_c.lock().unwrap();
+                let next = (st.profile.keyboard_chattering.threshold_ms as i32 + delta).clamp(
+                    i32::from(CHATTERING_THRESHOLD_MIN_MS),
+                    i32::from(CHATTERING_THRESHOLD_MAX_MS),
+                ) as u16;
+                st.profile.keyboard_chattering.threshold_ms = next;
+                st.kb_chattering_snap.threshold_ms = next;
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_kb_chattering_to_ui(&ui, &st.kb_chattering_snap);
+                }
+                st.profile.keyboard_chattering
+            };
+            let _ = tx_c.send(IpcRequest::SetKeyboardChatteringConfig { config: cfg });
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_kb_chatter_reset_clicked(move || {
+            {
+                let mut st = st_c.lock().unwrap();
+                let cfg = st.profile.keyboard_chattering;
+                st.kb_chattering_snap = KeyboardChatteringSnapshot {
+                    enabled: cfg.enabled,
+                    threshold_ms: cfg.threshold_ms,
+                    ..Default::default()
+                };
+                if let Some(ui) = ui_w.upgrade() {
+                    sync_kb_chattering_to_ui(&ui, &st.kb_chattering_snap);
+                }
+            }
+            let _ = tx_c.send(IpcRequest::ResetKeyboardChatteringStats);
+        });
+    }
+    {
+        let ui_w = main_window.as_weak();
+        let st_c = Arc::clone(&state);
+        let tx_c = tx.clone();
+        main_window.on_autostart_toggled(move || {
+            let next = {
+                let mut st = st_c.lock().unwrap();
+                st.autostart_enabled = !st.autostart_enabled;
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_autostart_enabled(st.autostart_enabled);
+                }
+                st.autostart_enabled
+            };
+            let _ = tx_c.send(IpcRequest::SetAutostart { enabled: next });
         });
     }
 

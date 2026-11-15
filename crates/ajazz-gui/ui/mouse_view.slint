@@ -2001,7 +2001,7 @@ export component MouseView inherits Rectangle {
                     }
 
                     Text {
-                        text: "Dica: se um switch registrar rebotes consistentes (<= limite ms), aumente o Debounce Hardware na sub-aba Performance (ex.: 8-12 ms).";
+                        text: "Dica: eventos Stuck Input (UP perdido ou retenção >=10s) exibem a bateria (%) no momento; rebotes <= limite ms indicam Switch Chattering.";
                         font-size: 10px;
                         color: Theme.text-muted;
                         wrap: word-wrap;

@@ -368,7 +368,27 @@ fn physical_button_label(btn: MouseButton) -> &'static str {
 pub fn sync_chattering_to_ui(ui: &MainWindow, snap: &SwitchChatteringSnapshot) {
     ui.set_ms_chatter_enabled(snap.enabled);
     ui.set_ms_chatter_threshold_ms(i32::from(snap.threshold_ms));
-    ui.set_ms_chatter_total(snap.total_chatter_events as i32);
+    let total_alerts = snap.total_chatter_events.saturating_add(snap.stuck_count);
+    ui.set_ms_chatter_total(total_alerts as i32);
+
+    let stuck_suffix = if snap.stuck_count > 0 {
+        let sbtn = snap
+            .last_stuck_button
+            .map(physical_button_label)
+            .unwrap_or("Botão");
+        let reason = if snap.last_stuck_missed_up {
+            "UP perdido"
+        } else {
+            "retido"
+        };
+        let bat = snap
+            .last_stuck_battery
+            .map(|b| format!("{b}%"))
+            .unwrap_or_else(|| "N/D".into());
+        format!("Stuck Input ({}): {sbtn} [{reason}, bat {bat}]", snap.stuck_count)
+    } else {
+        String::new()
+    };
 
     let alert_text = if snap.total_chatter_events > 0 {
         let btn = snap
@@ -379,14 +399,20 @@ pub fn sync_chattering_to_ui(ui: &MainWindow, snap: &SwitchChatteringSnapshot) {
             .last_chatter_interval_ms
             .map(|v| format!("{v} ms"))
             .unwrap_or_else(|| "-- ms".into());
-        format!(
-            "Alerta: {} evento(s) de Switch Chattering detectado(s)! Último: {btn} ({ms})",
-            snap.total_chatter_events
-        )
+        if stuck_suffix.is_empty() {
+            format!(
+                "Alerta: {} evento(s) de Switch Chattering! Último: {btn} ({ms})",
+                snap.total_chatter_events
+            )
+        } else {
+            format!("Chatter ({}) [{btn} {ms}] • {stuck_suffix}", snap.total_chatter_events)
+        }
+    } else if !stuck_suffix.is_empty() {
+        format!("Alerta: {stuck_suffix}")
     } else if !snap.enabled {
-        "Monitor de Switch Chattering pausado pelo usuário.".into()
+        "Monitor pausado pelo usuário.".into()
     } else {
-        "Nenhum rebote anormal detectado nos switches físicos.".into()
+        "Nenhum Switch Chattering ou Stuck Input detectado.".into()
     };
     ui.set_ms_chatter_alert_text(SharedString::from(alert_text));
 

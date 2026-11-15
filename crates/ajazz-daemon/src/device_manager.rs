@@ -1,8 +1,11 @@
 use crate::audio_capture::AudioSyncEngine;
-use crate::chattering::{spawn_chattering_monitor, ChatteringDetector};
+use crate::chattering::{
+    spawn_chattering_monitor, ChatteringDetector, KeyboardChatteringDetector,
+};
 use crate::gif_decoder::decode_gif_to_matrix_frames;
 use crate::profile_store::{load_profile, save_profile};
 use crate::screen_capture::ScreenCapturer;
+use crate::tray::{is_autostart_enabled, TrayStatus};
 use ajazz_protocol::hidapi;
 use ajazz_protocol::mouse::{
     Aj179MouseDevice, ChatteringConfig, MouseAsyncEvent, MouseButtonSlot, MouseConfig,
@@ -10,8 +13,9 @@ use ajazz_protocol::mouse::{
     MOUSE_MACRO_MAX_SLOTS,
 };
 use ajazz_protocol::{
-    Ak820Device, GifCrop, KeyAssignment, LightingConfig, LightingMode, MacroDefinition, RgbColor,
-    SystemStages, UserProfile, PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
+    Ak820Device, GifCrop, KeyAssignment, KeyboardChatteringConfig, KeyboardChatteringSnapshot,
+    LightingConfig, LightingMode, MacroDefinition, RgbColor, SystemStages, UserProfile,
+    PROFILE_AK820, TOTAL_PHYSICAL_LEDS,
 };
 use std::collections::BTreeMap;
 use std::sync::{
@@ -28,6 +32,8 @@ pub struct DeviceStatus {
     pub device_name: String,
     pub profile: UserProfile,
     pub is_playing_gif: bool,
+    pub keyboard_chattering: KeyboardChatteringSnapshot,
+    pub autostart_enabled: bool,
 }
 
 pub enum DeviceCommand {
@@ -67,6 +73,11 @@ pub enum DeviceCommand {
     UploadMouseMacros(oneshot::Sender<Result<(), String>>),
     SetChatteringConfig(ChatteringConfig, oneshot::Sender<Result<(), String>>),
     ResetChatteringStats(oneshot::Sender<Result<(), String>>),
+    SetKeyboardChatteringConfig(
+        KeyboardChatteringConfig,
+        oneshot::Sender<Result<(), String>>,
+    ),
+    ResetKeyboardChatteringStats(oneshot::Sender<Result<(), String>>),
 }
 
 fn cancel_active_streams(
@@ -178,6 +189,7 @@ fn forward_live_frame(
 pub async fn run_device_actor(
     cmd_tx: mpsc::Sender<DeviceCommand>,
     mut rx: mpsc::Receiver<DeviceCommand>,
+    tray_status: Arc<TrayStatus>,
 ) {
     info!("Iniciando gerenciador de hardware AK820...");
 
@@ -190,7 +202,15 @@ pub async fn run_device_actor(
     let chattering_detector = Arc::new(Mutex::new(ChatteringDetector::new(
         profile.mouse.chattering,
     )));
-    spawn_chattering_monitor(Arc::clone(&chattering_detector));
+    let kb_chattering_detector = Arc::new(Mutex::new(KeyboardChatteringDetector::new(
+        profile.keyboard_chattering,
+    )));
+    let kb_enabled_flag = kb_chattering_detector.lock().unwrap().enabled_flag();
+    spawn_chattering_monitor(
+        Arc::clone(&chattering_detector),
+        Arc::clone(&kb_chattering_detector),
+        kb_enabled_flag,
+    );
     let mut gif_cancel_tx: Option<watch::Sender<bool>> = None;
     let mut pre_gif_lighting: Option<LightingConfig> = None;
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
@@ -212,12 +232,20 @@ pub async fn run_device_actor(
                     profile.normalize();
                     save_profile(&profile);
                 }
+                if let Ok(mut det) = chattering_detector.lock() {
+                    det.set_mouse_battery(Some(st.battery_percent));
+                }
                 mouse_status = Some(st);
                 last_mouse_poll = Some(Instant::now());
             }
             mouse_dev = Some(mdev);
         }
     }
+    tray_status.set_keyboard(device.is_some());
+    tray_status.set_mouse(
+        mouse_dev.is_some(),
+        mouse_status.as_ref().map(|s| s.battery_percent),
+    );
 
     sync_live_streamers(
         device.is_some(),
@@ -661,11 +689,18 @@ pub async fn run_device_actor(
                         is_playing,
                     );
                 }
+                tray_status.set_keyboard(is_connected);
+                let kb_chatter = kb_chattering_detector
+                    .lock()
+                    .map(|d| d.snapshot())
+                    .unwrap_or_default();
                 let status = DeviceStatus {
                     connected: is_connected,
                     device_name: PROFILE_AK820.name.to_string(),
                     profile: profile.clone(),
                     is_playing_gif: is_playing,
+                    keyboard_chattering: kb_chatter,
+                    autostart_enabled: is_autostart_enabled(),
                 };
                 let _ = resp.send(status);
             }
@@ -678,9 +713,14 @@ pub async fn run_device_actor(
                     &mut hid_api,
                     &mut profile,
                 );
+                let bat_opt = mouse_status.as_ref().map(|s| s.battery_percent);
+                tray_status.set_mouse(mouse_dev.is_some(), bat_opt);
                 let chatter_snap = chattering_detector
                     .lock()
-                    .map(|d| d.snapshot())
+                    .map(|mut d| {
+                        d.set_mouse_battery(if mouse_dev.is_some() { bat_opt } else { None });
+                        d.snapshot()
+                    })
                     .unwrap_or_default();
                 let _ = resp.send((
                     mouse_dev.is_some(),
@@ -760,6 +800,23 @@ pub async fn run_device_actor(
 
             DeviceCommand::ResetChatteringStats(resp) => {
                 if let Ok(mut det) = chattering_detector.lock() {
+                    det.reset_stats();
+                }
+                let _ = resp.send(Ok(()));
+            }
+
+            DeviceCommand::SetKeyboardChatteringConfig(mut cfg, resp) => {
+                cfg.normalize();
+                profile.keyboard_chattering = cfg;
+                save_profile(&profile);
+                if let Ok(mut det) = kb_chattering_detector.lock() {
+                    det.set_config(cfg);
+                }
+                let _ = resp.send(Ok(()));
+            }
+
+            DeviceCommand::ResetKeyboardChatteringStats(resp) => {
+                if let Ok(mut det) = kb_chattering_detector.lock() {
                     det.reset_stats();
                 }
                 let _ = resp.send(Ok(()));

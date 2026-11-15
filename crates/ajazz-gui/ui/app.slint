@@ -5,17 +5,19 @@ import { LightingControls } from "lighting_controls.slint";
 import { KeymapControls } from "keymap_controls.slint";
 import { MacroControls, MacroStepItem } from "macro_controls.slint";
 import { SystemControls } from "system_controls.slint";
+import { KeyboardDiagControls, KeyboardChatterRowItem } from "keyboard_diag.slint";
 import { MouseView, MouseChatterRowItem } from "mouse_view.slint";
 import { SettingsView } from "settings_view.slint";
 
-export { MacroStepItem, MouseChatterRowItem }
+export { MacroStepItem, MouseChatterRowItem, KeyboardChatterRowItem }
 
 component SubTabPill inherits Rectangle {
     in property <string> label;
     in property <bool> active: false;
+    in property <length> pill-width: 100px;
     callback clicked();
 
-    width: 118px;
+    width: root.pill-width;
     height: 24px;
     border-radius: Theme.radius-sm;
     background: root.active ? Theme.surface-active : (ta.has-hover ? Theme.surface-hover : Theme.surface);
@@ -243,6 +245,20 @@ export component MainWindow inherits Window {
     callback sys-sync-from-device();
     callback sys-reset-keymap-factory();
 
+    // Diagnóstico passivo de Switch Chattering no teclado
+    in-out property <bool> kb-chatter-enabled: false;
+    in-out property <int> kb-chatter-threshold-ms: 45;
+    in-out property <int> kb-chatter-total: 0;
+    in-out property <string> kb-chatter-alert-text: "Monitor pausado pelo usuário.";
+    in-out property <[KeyboardChatterRowItem]> kb-chatter-rows: [];
+    callback kb-chatter-toggle-clicked();
+    callback kb-chatter-threshold-step(int);
+    callback kb-chatter-reset-clicked();
+
+    // Autostart do Daemon no Windows
+    in-out property <bool> autostart-enabled: false;
+    callback autostart-toggled();
+
     // Estado e callbacks do Mouse AJ179 NL P
     in-out property <string> sidebar-mouse-subtitle: "Desconectado";
     in-out property <bool> ms-connected: false;
@@ -413,10 +429,11 @@ export component MainWindow inherits Window {
 
                     HorizontalLayout {
                         spacing: 6px;
-                        SubTabPill { label: "Iluminação"; active: root.kb-subtab == 0; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 0; } }
-                        SubTabPill { label: "Remapear Teclas"; active: root.kb-subtab == 1; clicked => { root.macro-recording = false; root.kb-subtab = 1; } }
-                        SubTabPill { label: "Macros"; active: root.kb-subtab == 2; clicked => { root.km-capturing-key = false; root.kb-subtab = 2; } }
-                        SubTabPill { label: "Sistema"; active: root.kb-subtab == 3; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 3; } }
+                        SubTabPill { label: "Iluminação"; pill-width: 96px; active: root.kb-subtab == 0; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 0; } }
+                        SubTabPill { label: "Remapear Teclas"; pill-width: 112px; active: root.kb-subtab == 1; clicked => { root.macro-recording = false; root.kb-subtab = 1; } }
+                        SubTabPill { label: "Macros"; pill-width: 82px; active: root.kb-subtab == 2; clicked => { root.km-capturing-key = false; root.kb-subtab = 2; } }
+                        SubTabPill { label: "Sistema"; pill-width: 82px; active: root.kb-subtab == 3; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 3; } }
+                        SubTabPill { label: "Diagnóstico"; pill-width: 98px; active: root.kb-subtab == 4; clicked => { root.km-capturing-key = false; root.macro-recording = false; root.kb-subtab = 4; } }
                     }
 
                     if (root.sys-wasd-swap) : Rectangle {
@@ -581,6 +598,19 @@ export component MainWindow inherits Window {
                     sync-from-device-clicked => { root.sys-sync-from-device(); }
                     reset-keymap-factory-clicked => { root.sys-reset-keymap-factory(); }
                 }
+
+                // Sub-aba 4: Diagnóstico Passivo de Switch Chattering (Teclado)
+                if (root.kb-subtab == 4) : KeyboardDiagControls {
+                    chatter-enabled: root.kb-chatter-enabled;
+                    chatter-threshold-ms: root.kb-chatter-threshold-ms;
+                    chatter-total: root.kb-chatter-total;
+                    chatter-alert-text: root.kb-chatter-alert-text;
+                    chatter-rows: root.kb-chatter-rows;
+
+                    toggle-clicked => { root.kb-chatter-toggle-clicked(); }
+                    threshold-step(d) => { root.kb-chatter-threshold-step(d); }
+                    reset-clicked => { root.kb-chatter-reset-clicked(); }
+                }
             }
 
             // Aba 1: Mouse AJ179 NL P NearLink
@@ -682,6 +712,10 @@ export component MainWindow inherits Window {
             // Aba 2: Configurações & Daemon
             if (root.active-tab == 2) : SettingsView {
                 daemon-connected: root.daemon-online;
+                autostart: root.autostart-enabled;
+                toggle-autostart => {
+                    root.autostart-toggled();
+                }
                 restart-daemon => {
                     root.reconnect-daemon();
                 }
