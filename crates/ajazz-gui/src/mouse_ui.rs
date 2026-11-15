@@ -187,7 +187,7 @@ pub fn draft_button_from_ui(ui: &MainWindow) -> MouseButtonSlot {
             let loop_count = if loop_mode == 0 {
                 ui.get_ms_btn_macro_repeat().clamp(1, 99) as u8
             } else {
-                0
+                1
             };
             MouseButtonSlot::Macro {
                 index,
@@ -276,6 +276,7 @@ pub fn sync_selected_button_to_ui(
 
 pub struct MouseStatusSyncPlan {
     pub sync_config: bool,
+    pub sync_dpi_index: Option<i32>,
     pub sync_buttons: bool,
     pub draft_cfg: MouseConfig,
     pub dirty: bool,
@@ -300,11 +301,22 @@ pub fn merge_mouse_status(
     st.mouse_status = mouse_status;
 
     let cfg_changed_externally = st.profile.mouse.config != prev_cfg;
+    let dpi_stage_changed_externally = st.profile.mouse.config.dpi_index != prev_cfg.dpi_index;
     let buttons_changed = st.profile.mouse.buttons != prev_buttons;
 
     let sync_config = first_or_forced || (!was_dirty && cfg_changed_externally);
+    let mut sync_dpi_index = None;
     if sync_config {
         st.draft_mouse_config = st.profile.mouse.config.clone();
+    } else if dpi_stage_changed_externally {
+        // Troca pelo botão físico do mouse deve sempre refletir na UI sem descartar rascunhos de DPI/sensor.
+        let count = st
+            .draft_mouse_config
+            .dpi_count
+            .clamp(1, MOUSE_MAX_DPI_STAGES as u8);
+        let idx = st.profile.mouse.config.dpi_index.min(count - 1);
+        st.draft_mouse_config.dpi_index = idx;
+        sync_dpi_index = Some(idx as i32);
     }
     st.mouse_synced_initial = true;
     st.mouse_force_resync = false;
@@ -312,6 +324,7 @@ pub fn merge_mouse_status(
     let dirty = st.draft_mouse_config != st.profile.mouse.config;
     MouseStatusSyncPlan {
         sync_config,
+        sync_dpi_index,
         sync_buttons: first_or_forced || buttons_changed,
         draft_cfg: st.draft_mouse_config.clone(),
         dirty,
@@ -584,25 +597,23 @@ pub fn register_mouse_callbacks(
         let st_c = Arc::clone(state);
         ui.on_ms_dpi_text_edited(move |slot, text| {
             let s = slot.clamp(0, (MOUSE_MAX_DPI_STAGES - 1) as i32) as usize;
-            if let Ok(parsed) = text.trim().parse::<u16>() {
-                if parsed >= 50 {
-                    let (vals, dirty) = {
-                        let mut st = st_c.lock().unwrap();
-                        st.draft_mouse_config.dpi_stages[s] = clamp_dpi(parsed);
-                        st.draft_mouse_config.normalize();
-                        let vals: Vec<i32> = st
-                            .draft_mouse_config
-                            .dpi_stages
-                            .iter()
-                            .map(|d| *d as i32)
-                            .collect();
-                        let dirty = st.draft_mouse_config != st.profile.mouse.config;
-                        (vals, dirty)
-                    };
-                    if let Some(ui) = ui_w.upgrade() {
-                        ui.set_ms_dpi_values(ModelRc::from(Rc::new(VecModel::from(vals))));
-                        ui.set_ms_dirty(dirty);
-                    }
+            if let Some(dpi) = parse_dpi_input(&text) {
+                let (vals, dirty) = {
+                    let mut st = st_c.lock().unwrap();
+                    st.draft_mouse_config.dpi_stages[s] = dpi;
+                    st.draft_mouse_config.normalize();
+                    let vals: Vec<i32> = st
+                        .draft_mouse_config
+                        .dpi_stages
+                        .iter()
+                        .map(|d| *d as i32)
+                        .collect();
+                    let dirty = st.draft_mouse_config != st.profile.mouse.config;
+                    (vals, dirty)
+                };
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_ms_dpi_values(ModelRc::from(Rc::new(VecModel::from(vals))));
+                    ui.set_ms_dirty(dirty);
                 }
             }
         });
@@ -615,8 +626,8 @@ pub fn register_mouse_callbacks(
         ui.on_ms_dpi_text_committed(move |slot, text| {
             let s = slot.clamp(0, (MOUSE_MAX_DPI_STAGES - 1) as i32) as usize;
             mutate_mouse_draft(&st_c, &ui_w, |cfg| {
-                if let Ok(parsed) = text.trim().parse::<u16>() {
-                    cfg.dpi_stages[s] = clamp_dpi(parsed);
+                if let Some(dpi) = parse_dpi_input(&text) {
+                    cfg.dpi_stages[s] = dpi;
                 }
             });
         });
@@ -726,14 +737,19 @@ pub fn register_mouse_callbacks(
 
     // Aplicar Config Rascunho / Sincronizar / Pareamento
     {
+        let ui_w = ui.as_weak();
         let st_c = Arc::clone(state);
         let tx_c = tx.clone();
         ui.on_ms_apply_config_clicked(move || {
-            let cfg = {
+            let (cfg, dirty) = {
                 let mut st = st_c.lock().unwrap();
                 st.draft_mouse_config.normalize();
-                st.draft_mouse_config.clone()
+                let dirty = st.draft_mouse_config != st.profile.mouse.config;
+                (st.draft_mouse_config.clone(), dirty)
             };
+            if let Some(ui) = ui_w.upgrade() {
+                sync_config_to_ui(&ui, &cfg, dirty);
+            }
             let _ = tx_c.send(IpcRequest::SetMouseConfig { config: cfg });
         });
     }
@@ -995,6 +1011,14 @@ pub fn register_mouse_callbacks(
     }
 }
 
+fn parse_dpi_input(raw: &str) -> Option<u16> {
+    let val = raw.trim().parse::<u32>().ok()?;
+    if val < 50 {
+        return None;
+    }
+    Some(clamp_dpi(val.min(26_000) as u16))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1046,6 +1070,16 @@ mod tests {
         updated.buttons[3] = MouseButtonSlot::System(SystemKey::Sleep);
         let third = merge_mouse_status(&mut st, true, None, updated);
         assert!(third.sync_buttons);
+
+        // Mesmo com rascunho dirty em edição, troca física do botão de DPI deve atualizar dpi_index
+        st.draft_mouse_config.dpi_stages[0] = 1600;
+        let mut hw_dpi = st.profile.mouse.clone();
+        hw_dpi.config.dpi_index = 2;
+        let fourth = merge_mouse_status(&mut st, true, None, hw_dpi);
+        assert!(!fourth.sync_config);
+        assert_eq!(fourth.sync_dpi_index, Some(2));
+        assert_eq!(st.draft_mouse_config.dpi_stages[0], 1600);
+        assert!(fourth.dirty);
     }
 
     #[test]
@@ -1075,5 +1109,12 @@ mod tests {
             loop_count: 0,
         };
         assert_eq!(slot_short_label_with_macros(&missing, &macros), "Macro #3");
+    }
+
+    #[test]
+    fn parse_dpi_input_clamps_high_values_and_ignores_incomplete_prefixes() {
+        assert_eq!(parse_dpi_input("40"), None);
+        assert_eq!(parse_dpi_input("1630"), Some(1650));
+        assert_eq!(parse_dpi_input("80000"), Some(26000));
     }
 }

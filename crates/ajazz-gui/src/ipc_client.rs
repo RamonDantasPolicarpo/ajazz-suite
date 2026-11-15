@@ -96,8 +96,32 @@ pub enum IpcResponse {
     Pong,
 }
 
+fn timeout_for_request(req: &IpcRequest) -> Duration {
+    match req {
+        IpcRequest::SetMouseConfig { .. }
+        | IpcRequest::SetMouseButton { .. }
+        | IpcRequest::ResetMouseButtons
+        | IpcRequest::SyncMouseFromDevice
+        | IpcRequest::StartMousePairing
+        | IpcRequest::UploadMouseMacros
+        | IpcRequest::SetSystemStages { .. }
+        | IpcRequest::SetKeyAssignment { .. }
+        | IpcRequest::ResetKeymap
+        | IpcRequest::UpsertMacro { .. }
+        | IpcRequest::DeleteMacro { .. }
+        | IpcRequest::SyncFromDevice
+        | IpcRequest::SetStaticColor { .. }
+        | IpcRequest::SetLighting { .. }
+        | IpcRequest::SetCustomBank { .. }
+        | IpcRequest::SelectCustomBank { .. }
+        | IpcRequest::PlayGif { .. } => Duration::from_millis(10_000),
+        _ => Duration::from_millis(4000),
+    }
+}
+
 /// Envia uma requisição única para o Daemon e aguarda a resposta.
 pub async fn send_request(req: IpcRequest) -> Result<IpcResponse, String> {
+    let wait_timeout = timeout_for_request(&req);
     let client = ClientOptions::new()
         .open(PIPE_NAME)
         .map_err(|e| format!("Não foi possível conectar ao Daemon: {e}"))?;
@@ -113,7 +137,7 @@ pub async fn send_request(req: IpcRequest) -> Result<IpcResponse, String> {
         .await
         .map_err(|e| format!("Erro ao enviar requisição IPC: {e}"))?;
 
-    match tokio::time::timeout(Duration::from_millis(4000), lines.next_line()).await {
+    match tokio::time::timeout(wait_timeout, lines.next_line()).await {
         Ok(Ok(Some(line))) => {
             serde_json::from_str::<IpcResponse>(&line)
                 .map_err(|e| format!("Resposta IPC inválida: {e}"))
