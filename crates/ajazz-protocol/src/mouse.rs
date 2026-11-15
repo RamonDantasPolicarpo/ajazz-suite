@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::thread;
 use std::time::Duration;
 
@@ -344,7 +345,13 @@ impl MouseButtonSlot {
                 index,
                 loop_mode,
                 loop_count,
-            } => [0x60, index, loop_mode, loop_count],
+            } => {
+                // `sub_425440` + `sub_415790` (`label_4158b9`):
+                // byte[2] = loop_count (>= 1), byte[3] = loop_mode (0..=2).
+                let count = if loop_count == 0 { 1 } else { loop_count };
+                let mode = if loop_mode > 2 { 0 } else { loop_mode };
+                [0x60, index, count, mode]
+            }
             Self::Raw(bytes) => bytes,
         }
     }
@@ -469,6 +476,18 @@ pub fn validate_outgoing_packet(pkt: &[u8; HID_REPORT_PAYLOAD_SIZE]) -> Result<(
             "Prefixo de comando não autorizado para o mouse: 0x{:02X} 0x{:02X}",
             pkt[0], pkt[1]
         )));
+    }
+    if pkt[0] == 0x06 && pkt[1] == 0x12 {
+        for idx in 0..9 {
+            let base = 5 + idx * 4;
+            if pkt[base] == 0x60 && (pkt[base + 2] == 0 || pkt[base + 3] > 2) {
+                return Err(ProtocolError::InvalidProtocolData(format!(
+                    "Slot macro inválido em 06 12 (slot {idx}): count={}, mode={}",
+                    pkt[base + 2],
+                    pkt[base + 3]
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -806,6 +825,12 @@ pub fn parse_status_response(
     connection_mode: MouseConnectionMode,
     receiver_fw: Option<String>,
 ) -> Result<MouseStatus, ProtocolError> {
+    if rx[0] != MOUSE_REPORT_ID || rx[1] != 0x05 {
+        return Err(ProtocolError::InvalidProtocolData(format!(
+            "Resposta inesperada ao consultar status 06 05: {:02X} {:02X}",
+            rx[0], rx[1]
+        )));
+    }
     if rx[9] == 0 && rx[10] == 0 {
         return Err(ProtocolError::InvalidProtocolData(
             "Resposta 06 05 ainda sem versão/estado válido do mouse (rx[9..10]==0)".into(),
@@ -851,7 +876,7 @@ pub fn parse_status_response(
 }
 
 pub fn parse_receiver_fw_response(rx: &[u8; HID_REPORT_PAYLOAD_SIZE]) -> Option<String> {
-    if rx[5] == 1 {
+    if rx[0] == MOUSE_REPORT_ID && rx[1] == 0x07 && rx[5] == 1 {
         Some(format_fw_version(rx[10], rx[9]))
     } else {
         None
@@ -878,9 +903,77 @@ pub fn parse_async_notify(rx: &[u8; HID_REPORT_PAYLOAD_SIZE]) -> Option<MouseAsy
     }
 }
 
+const MOUSE_CMD_READ_TIMEOUT_MS: i32 = 100;
+const MOUSE_CMD_MAX_RETRIES: usize = 10;
+
+/// Executa envio+leitura HID espelhando `sub_449170` (`10 x 100ms + 10ms`).
+/// Quando o receptor NearLink está com 1 resposta pendente atrasada (`rx[1] != pkt[1]`),
+/// envia até 2 sondagens seguras `06 05` para destravar a fila TX do dongle sem perder eventos `0xFA`.
+fn exchange_report_with<W, R, S>(
+    pending_events: &mut VecDeque<MouseAsyncEvent>,
+    pkt: &[u8; HID_REPORT_PAYLOAD_SIZE],
+    expect_reply: bool,
+    max_timeout_retries: usize,
+    read_timeout_ms: i32,
+    mut write_fn: W,
+    mut read_fn: R,
+    mut sleep_fn: S,
+) -> Result<[u8; HID_REPORT_PAYLOAD_SIZE], ProtocolError>
+where
+    W: FnMut(&[u8; HID_REPORT_PAYLOAD_SIZE]) -> Result<(), ProtocolError>,
+    R: FnMut(&mut [u8], i32) -> Result<usize, ProtocolError>,
+    S: FnMut(Duration),
+{
+    let mut raw = [0u8; HID_REPORT_PAYLOAD_SIZE + 1];
+
+    write_fn(pkt)?;
+    if !expect_reply {
+        return Ok([0u8; HID_REPORT_PAYLOAD_SIZE]);
+    }
+
+    let require_opcode_match = pkt[0] == MOUSE_REPORT_ID && matches!(pkt[1], 0x05 | 0x07 | 0x13);
+    let mut timeout_retries = 0usize;
+    let mut mismatch_flushes = 0usize;
+    let mut saw_mismatch = false;
+
+    for _ in 0..32 {
+        let n = read_fn(&mut raw, read_timeout_ms)?;
+        if n == 0 {
+            if saw_mismatch && mismatch_flushes < 2 {
+                mismatch_flushes += 1;
+                saw_mismatch = false;
+                write_fn(&build_read_status_packet())?;
+                continue;
+            }
+            timeout_retries += 1;
+            if timeout_retries >= max_timeout_retries {
+                return Err(ProtocolError::ResponseTimeout { opcode: pkt[1] });
+            }
+            sleep_fn(Duration::from_millis(10));
+            continue;
+        }
+        let rx = normalize_rx_report(&raw[..n]);
+        // Preserva notificações assíncronas (0xFA) que chegarem durante a espera de um comando.
+        if rx[1] == 0xFA {
+            if let Some(ev) = parse_async_notify(&rx) {
+                pending_events.push_back(ev);
+            }
+            continue;
+        }
+        if require_opcode_match && (rx[0] != pkt[0] || rx[1] != pkt[1]) {
+            saw_mismatch = true;
+            continue;
+        }
+        return Ok(rx);
+    }
+    Err(ProtocolError::ResponseTimeout { opcode: pkt[1] })
+}
+
 pub struct Aj179MouseDevice {
     device: hidapi::HidDevice,
     connection_mode: MouseConnectionMode,
+    pending_events: VecDeque<MouseAsyncEvent>,
+    cached_receiver_fw: Option<String>,
 }
 
 impl Aj179MouseDevice {
@@ -897,6 +990,8 @@ impl Aj179MouseDevice {
                         return Ok(Self {
                             device,
                             connection_mode: mode,
+                            pending_events: VecDeque::new(),
+                            cached_receiver_fw: None,
                         });
                     }
                     MouseConnectionMode::NearLink24G if fallback_24g.is_none() => {
@@ -911,6 +1006,8 @@ impl Aj179MouseDevice {
             return Ok(Self {
                 device,
                 connection_mode: mode,
+                pending_events: VecDeque::new(),
+                cached_receiver_fw: None,
             });
         }
         Err(ProtocolError::DeviceNotFound {
@@ -930,22 +1027,37 @@ impl Aj179MouseDevice {
         timeout_ms: i32,
     ) -> Result<[u8; HID_REPORT_PAYLOAD_SIZE], ProtocolError> {
         validate_outgoing_packet(pkt)?;
-        self.device.write(pkt)?;
-        let mut raw = [0u8; HID_REPORT_PAYLOAD_SIZE + 1];
-        if !expect_reply {
-            return Ok([0u8; HID_REPORT_PAYLOAD_SIZE]);
-        }
-        let n = self.device.read_timeout(&mut raw, timeout_ms)?;
-        if n == 0 {
-            return Err(ProtocolError::ResponseTimeout { opcode: pkt[1] });
-        }
-        Ok(normalize_rx_report(&raw[..n]))
+        let read_ms = if timeout_ms > 0 {
+            timeout_ms.min(MOUSE_CMD_READ_TIMEOUT_MS)
+        } else {
+            MOUSE_CMD_READ_TIMEOUT_MS
+        };
+        let device = &self.device;
+        exchange_report_with(
+            &mut self.pending_events,
+            pkt,
+            expect_reply,
+            MOUSE_CMD_MAX_RETRIES,
+            read_ms,
+            |buf| {
+                device.write(buf)?;
+                Ok(())
+            },
+            |buf, ms| Ok(device.read_timeout(buf, ms)?),
+            thread::sleep,
+        )
     }
 
     pub fn read_receiver_fw(&mut self) -> Result<Option<String>, ProtocolError> {
         let pkt = build_read_receiver_fw_packet();
-        match self.write_and_maybe_read(&pkt, true, 150) {
-            Ok(rx) => Ok(parse_receiver_fw_response(&rx)),
+        match self.write_and_maybe_read(&pkt, true, MOUSE_CMD_READ_TIMEOUT_MS) {
+            Ok(rx) => {
+                let parsed = parse_receiver_fw_response(&rx);
+                if parsed.is_some() {
+                    self.cached_receiver_fw = parsed.clone();
+                }
+                Ok(parsed)
+            }
             Err(ProtocolError::ResponseTimeout { .. }) => Ok(None),
             Err(e) => Err(e),
         }
@@ -954,12 +1066,14 @@ impl Aj179MouseDevice {
     /// Leitura bruta de diagnóstico (`06 05`), retornando o buffer pós-normalização.
     pub fn read_status_raw(&mut self) -> Result<[u8; HID_REPORT_PAYLOAD_SIZE], ProtocolError> {
         let pkt = build_read_status_packet();
-        for attempt in 0..5 {
-            match self.write_and_maybe_read(&pkt, true, 150) {
-                Ok(rx) if !(rx[9] == 0 && rx[10] == 0) => return Ok(rx),
-                Ok(_) if attempt < 4 => thread::sleep(Duration::from_millis(20)),
+        for attempt in 0..4 {
+            match self.write_and_maybe_read(&pkt, true, MOUSE_CMD_READ_TIMEOUT_MS) {
+                Ok(rx) if rx[0] == MOUSE_REPORT_ID && rx[1] == 0x05 && !(rx[9] == 0 && rx[10] == 0) => {
+                    return Ok(rx)
+                }
+                Ok(_) if attempt < 3 => thread::sleep(Duration::from_millis(20)),
                 Ok(rx) => return Ok(rx),
-                Err(ProtocolError::ResponseTimeout { .. }) if attempt < 4 => {
+                Err(ProtocolError::ResponseTimeout { .. }) if attempt < 3 => {
                     thread::sleep(Duration::from_millis(20));
                 }
                 Err(e) => return Err(e),
@@ -970,7 +1084,10 @@ impl Aj179MouseDevice {
 
     pub fn read_status(&mut self) -> Result<MouseStatus, ProtocolError> {
         let receiver_fw = if self.connection_mode == MouseConnectionMode::NearLink24G {
-            self.read_receiver_fw().ok().flatten()
+            if self.cached_receiver_fw.is_none() {
+                let _ = self.read_receiver_fw();
+            }
+            self.cached_receiver_fw.clone()
         } else {
             None
         };
@@ -982,6 +1099,9 @@ impl Aj179MouseDevice {
         &mut self,
         timeout_ms: i32,
     ) -> Result<Option<MouseAsyncEvent>, ProtocolError> {
+        if let Some(ev) = self.pending_events.pop_front() {
+            return Ok(Some(ev));
+        }
         let mut raw = [0u8; HID_REPORT_PAYLOAD_SIZE + 1];
         let n = self.device.read_timeout(&mut raw, timeout_ms)?;
         if n == 0 {
@@ -1155,7 +1275,7 @@ mod tests {
         ]);
         assert_eq!(&keymap[..5], &[0x06, 0x12, 0x20, 0x00, 0x00]);
         assert_eq!(&keymap[5..9], &[0x10, 0x01, 0x02, 0x00]);
-        assert_eq!(&keymap[9..13], &[0x60, 0x02, 0x01, 0x03]);
+        assert_eq!(&keymap[9..13], &[0x60, 0x02, 0x03, 0x01]);
         assert_eq!(&keymap[13..17], &[0x10, 0x04, 0x00, 0x00]);
 
         let apply = build_apply_packet();
@@ -1354,5 +1474,79 @@ mod tests {
             steps: too_many_steps,
         }]);
         assert!(matches!(res, Err(ProtocolError::InvalidPayloadSize { .. })));
+    }
+
+    #[test]
+    fn rejects_non_06_05_response_such_as_captured_06_07_packet() {
+        // Captura real no hardware (PID 0x642E): após `06 07`, o dongle retornou `06 07` em vez de `06 05`.
+        let mut stale_06_07 = [0u8; HID_REPORT_PAYLOAD_SIZE];
+        stale_06_07[..12].copy_from_slice(&[
+            0x06, 0x07, 0x06, 0x00, 0x00, 0x01, 0x00, 0x2E, 0x64, 0x0E, 0x10, 0x00,
+        ]);
+        let res = parse_status_response(&stale_06_07, MouseConnectionMode::NearLink24G, None);
+        assert!(
+            matches!(res, Err(ProtocolError::InvalidProtocolData(_))),
+            "Resposta 06 07 não pode ser parseada como MouseStatus (06 05): {res:?}"
+        );
+    }
+
+    #[test]
+    fn exchange_drains_stale_preserves_0xfa_retries_timeout_and_matches_opcode() {
+        let mut pending = VecDeque::new();
+        let dpi_pkt = build_set_dpi_packet(6, 2, 1600);
+
+        let mut queued_0xfa = [0u8; 64];
+        queued_0xfa[0] = 0x06;
+        queued_0xfa[1] = 0xFA;
+        queued_0xfa[5] = 0x02;
+        queued_0xfa[6] = 0x04;
+
+        let mut stale_06_07 = [0u8; 64];
+        stale_06_07[..4].copy_from_slice(&[0x06, 0x07, 0x06, 0x00]);
+
+        let mut real_06_13 = [0u8; 64];
+        real_06_13[..4].copy_from_slice(&[0x06, 0x13, 0x01, 0x00]);
+
+        // Simula lag=1 do dongle: `06 13` lê [06 07] residual + [06 FA], timeout aciona flush `06 05`,
+        // depois 2 timeouts parciais (200ms+) antes de finalmente receber [06 13].
+        let mut steps = VecDeque::from(vec![
+            Some(stale_06_07),
+            Some(queued_0xfa),
+            None,
+            None,
+            None,
+            Some(real_06_13),
+        ]);
+        let mut writes = Vec::new();
+        let mut sleeps = 0usize;
+
+        let rx = exchange_report_with(
+            &mut pending,
+            &dpi_pkt,
+            true,
+            MOUSE_CMD_MAX_RETRIES,
+            MOUSE_CMD_READ_TIMEOUT_MS,
+            |pkt| {
+                writes.push([pkt[0], pkt[1]]);
+                Ok(())
+            },
+            |buf, _timeout| match steps.pop_front().flatten() {
+                Some(pkt) => {
+                    buf[..64].copy_from_slice(&pkt);
+                    Ok(64)
+                }
+                None => Ok(0),
+            },
+            |_| sleeps += 1,
+        )
+        .expect("deve concluir mesmo com lag=1 no dongle e timeouts parciais");
+
+        assert_eq!(writes, vec![[0x06, 0x13], [0x06, 0x05]]);
+        assert_eq!(sleeps, 2);
+        assert_eq!(&rx[..4], &[0x06, 0x13, 0x01, 0x00]);
+        assert_eq!(
+            pending.pop_front(),
+            Some(MouseAsyncEvent::DpiStageChanged { index: 4 })
+        );
     }
 }

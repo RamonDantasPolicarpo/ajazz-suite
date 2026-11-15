@@ -208,6 +208,10 @@ pub async fn run_device_actor(
                 mdev.connection_mode()
             );
             if let Ok(st) = mdev.read_status() {
+                if sync_profile_mouse_from_poll(false, &st, &mut profile.mouse) {
+                    profile.normalize();
+                    save_profile(&profile);
+                }
                 mouse_status = Some(st);
                 last_mouse_poll = Some(Instant::now());
             }
@@ -973,6 +977,31 @@ fn merge_mouse_status_poll(prev: Option<&MouseStatus>, mut next: MouseStatus) ->
     next
 }
 
+fn has_valid_online_snapshot(st: Option<&MouseStatus>) -> bool {
+    st.is_some_and(|s| s.online || s.raw_dpi_words.iter().any(|&w| w != 0))
+}
+
+/// Sincroniza DPI (e config completa na primeira leitura online) do hardware para o perfil salvo.
+fn sync_profile_mouse_from_poll(
+    prev_had_online: bool,
+    merged: &MouseStatus,
+    mouse_profile: &mut ajazz_protocol::mouse::MouseProfile,
+) -> bool {
+    if !merged.online {
+        return false;
+    }
+    let before = mouse_profile.config.clone();
+    if !prev_had_online {
+        mouse_profile.config = merged.config.clone();
+    } else {
+        mouse_profile.config.dpi_count = merged.config.dpi_count;
+        mouse_profile.config.dpi_index = merged.config.dpi_index;
+        mouse_profile.config.dpi_stages = merged.config.dpi_stages;
+    }
+    mouse_profile.config.normalize();
+    mouse_profile.config != before
+}
+
 fn poll_or_connect_mouse(
     mouse_dev: &mut Option<Aj179MouseDevice>,
     mouse_status: &mut Option<MouseStatus>,
@@ -988,16 +1017,21 @@ fn poll_or_connect_mouse(
 
     let mut need_resync = mouse_status.is_none()
         || last_mouse_poll.is_none_or(|t| t.elapsed() >= MOUSE_STATUS_REFRESH_INTERVAL);
+    let mut dpi_changed_hw = false;
     if let Some(ref mut dev) = mouse_dev {
-        for _ in 0..8 {
+        for _ in 0..16 {
             match dev.poll_notification(0) {
                 Ok(Some(MouseAsyncEvent::Reconnect)) => need_resync = true,
                 Ok(Some(MouseAsyncEvent::DpiStageChanged { index })) => {
+                    let max_idx = profile.mouse.config.dpi_count.saturating_sub(1);
+                    let clamped = index.min(max_idx);
                     if let Some(ref mut st) = mouse_status {
                         st.config.dpi_index = index.min(st.config.dpi_count.saturating_sub(1));
                     }
-                    profile.mouse.config.dpi_index =
-                        index.min(profile.mouse.config.dpi_count.saturating_sub(1));
+                    if profile.mouse.config.dpi_index != clamped {
+                        profile.mouse.config.dpi_index = clamped;
+                        dpi_changed_hw = true;
+                    }
                 }
                 Ok(Some(MouseAsyncEvent::BatteryUpdated {
                     charging,
@@ -1025,7 +1059,13 @@ fn poll_or_connect_mouse(
         if let Some(ref mut dev) = mouse_dev {
             match dev.read_status() {
                 Ok(st) => {
-                    *mouse_status = Some(merge_mouse_status_poll(mouse_status.as_ref(), st));
+                    let prev_had_online = has_valid_online_snapshot(mouse_status.as_ref());
+                    let merged = merge_mouse_status_poll(mouse_status.as_ref(), st);
+                    if sync_profile_mouse_from_poll(prev_had_online, &merged, &mut profile.mouse) {
+                        profile.normalize();
+                        dpi_changed_hw = true;
+                    }
+                    *mouse_status = Some(merged);
                     *last_mouse_poll = Some(Instant::now());
                 }
                 Err(e) => {
@@ -1036,6 +1076,10 @@ fn poll_or_connect_mouse(
                 }
             }
         }
+    }
+
+    if dpi_changed_hw {
+        save_profile(profile);
     }
 }
 
@@ -1127,14 +1171,17 @@ fn apply_mouse_config_command(
     next: MouseConfig,
 ) -> Result<(), String> {
     let dev = ensure_mouse_connected(mouse_dev, hid_api)?;
-    let prev = mouse_status.as_ref().map(|s| &s.config);
+    let prev = mouse_status
+        .as_ref()
+        .filter(|s| has_valid_online_snapshot(Some(s)))
+        .map(|s| &s.config);
     match apply_mouse_config_diff(dev, prev, &next) {
         Ok(()) => {
             profile.mouse.config = next;
             profile.normalize();
             save_profile(profile);
             if let Ok(st) = dev.read_status() {
-                *mouse_status = Some(st);
+                *mouse_status = Some(merge_mouse_status_poll(mouse_status.as_ref(), st));
             }
             Ok(())
         }
@@ -1331,5 +1378,62 @@ mod tests {
         assert!(!merged.online);
         assert_eq!(merged.battery_percent, 50);
         assert_eq!(merged.config.debounce_ms, 4);
+    }
+
+    #[test]
+    fn sync_profile_mouse_auto_syncs_dpi_and_ignores_offline_50dpi_payloads() {
+        use ajazz_protocol::mouse::{MouseConnectionMode, MouseProfile};
+
+        let mut profile = MouseProfile::default();
+        assert_eq!(profile.config.dpi_count, 4);
+
+        let offline = MouseStatus {
+            connection_mode: MouseConnectionMode::NearLink24G,
+            online: false,
+            charging: false,
+            battery_percent: 0,
+            mouse_fw: "1.0.14".into(),
+            receiver_fw: Some("1.0.14".into()),
+            raw_mode: 0,
+            report_flag: 0,
+            config: MouseConfig {
+                dpi_count: 1,
+                dpi_index: 0,
+                dpi_stages: [50; 6],
+                ..Default::default()
+            },
+            raw_dpi_words: [0; 6],
+        };
+        assert!(!has_valid_online_snapshot(Some(&offline)));
+        assert!(!sync_profile_mouse_from_poll(false, &offline, &mut profile));
+        assert_eq!(profile.config.dpi_count, 4);
+
+        let online = MouseStatus {
+            connection_mode: MouseConnectionMode::NearLink24G,
+            online: true,
+            charging: false,
+            battery_percent: 100,
+            mouse_fw: "1.0.14".into(),
+            receiver_fw: Some("1.0.14".into()),
+            raw_mode: 1,
+            report_flag: 15,
+            config: MouseConfig {
+                dpi_count: 6,
+                dpi_index: 2,
+                dpi_stages: [400, 800, 1650, 3200, 2400, 3200],
+                debounce_ms: 4,
+                ..Default::default()
+            },
+            raw_dpi_words: [7, 15, 32, 63, 47, 63],
+        };
+        assert!(has_valid_online_snapshot(Some(&online)));
+        assert!(sync_profile_mouse_from_poll(false, &online, &mut profile));
+        assert_eq!(profile.config.dpi_count, 6);
+        assert_eq!(profile.config.dpi_index, 2);
+        assert_eq!(
+            profile.config.dpi_stages,
+            [400, 800, 1650, 3200, 2400, 3200]
+        );
+        assert_eq!(profile.config.debounce_ms, 4);
     }
 }
