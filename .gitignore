@@ -23,3 +23,4 @@ __pycache__/
 AK820_RGB_Keyboard/
 AJAZZ_Mouse/
 .claude/
+.agents/
